@@ -73,6 +73,7 @@ def _build_driver(
         if proxy.username or proxy.password:
             ext_dir = build_proxy_auth_extension(proxy)
             opts.add_argument(f"--load-extension={ext_dir}")
+            opts.add_argument(f"--disable-extensions-except={ext_dir}")
         else:
             opts.add_argument(
                 f"--proxy-server={proxy.scheme}://{proxy.host}:{proxy.port}"
@@ -135,6 +136,51 @@ def _has_anchor_iframe(driver) -> bool:
         return False
 
 
+def _verify_proxy(driver, proxy: ProxyConfig, log: Logger) -> None:
+    """Navigate to an IP echo endpoint through the proxy and log the exit IP.
+
+    Raises RuntimeError if the proxy is clearly not being used (e.g. the
+    browser errors out loading the page, or the response body doesn't
+    look like an IP). The extra page load also gives the proxy-auth
+    extension a moment to register its listeners before any real
+    traffic happens.
+    """
+    endpoints = [
+        "https://api.ipify.org?format=text",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    ]
+    last_err: Optional[str] = None
+    driver.set_page_load_timeout(30)
+
+    for attempt in range(3):
+        for url in endpoints:
+            try:
+                driver.get(url)
+                body = ""
+                try:
+                    body = driver.find_element(By.TAG_NAME, "body").text.strip()
+                except WebDriverException:
+                    body = ""
+                if body and len(body) < 64 and any(c.isdigit() for c in body):
+                    log(
+                        f"Proxy verified. Exit IP: {body.splitlines()[0].strip()}"
+                    )
+                    return
+                last_err = f"{url}: unexpected response {body[:80]!r}"
+            except WebDriverException as exc:
+                last_err = (
+                    f"{url}: {exc.__class__.__name__}: "
+                    f"{str(exc).splitlines()[0] if str(exc) else ''}"
+                )
+                continue
+        time.sleep(1.5)
+
+    raise RuntimeError(
+        f"Proxy pre-flight failed (proxy={proxy.host}:{proxy.port}): {last_err}"
+    )
+
+
 def _confirmation_reached(driver) -> bool:
     url = driver.current_url or ""
     if "formResponse" in url:
@@ -168,6 +214,10 @@ def submit_form(
 
     driver, ext_dir = _build_driver(headless=headless, proxy=proxy)
     try:
+        if proxy is not None:
+            log("Verifying proxy connectivity ...")
+            _verify_proxy(driver, proxy, log)
+
         driver.get(form_url)
 
         email_input = WebDriverWait(driver, 20).until(
