@@ -130,6 +130,9 @@ class RecaptchaSolver:
         try:
             self.driver.switch_to.frame(challenge_iframe)
 
+            self.log("Captcha popup opened — waiting 5s before clicking audio ...")
+            time.sleep(5)
+
             try:
                 audio_btn = WebDriverWait(self.driver, 5).until(
                     EC.element_to_be_clickable((By.ID, "recaptcha-audio-button"))
