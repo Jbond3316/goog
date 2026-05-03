@@ -1,0 +1,5 @@
+Flask==3.0.3
+selenium==4.25.0
+pydub==0.25.1
+SpeechRecognition==3.10.4
+requests==2.32.3
