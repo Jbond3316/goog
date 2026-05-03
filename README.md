@@ -86,7 +86,9 @@ Paste:
 - **Google Form URL** – the `…/viewform` link.
 - **Emails** – one per line, or comma-separated.
 - **Delay** – seconds to wait between submissions.
-- **Headless** – untick to watch the browser actually solve the captcha.
+- **Headless** – off by default. reCAPTCHA often blocks headless Chrome
+  regardless of proxy; leave this off unless you're running on a server
+  without a display and know your traffic handles reCAPTCHA headless.
 - **Proxy** – tick *Route through HTTP proxy* and fill host / port /
   username / password. The inputs are pre-filled with DataImpulse
   gateway defaults; change as needed. When enabled, both Chrome and

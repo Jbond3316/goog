@@ -56,8 +56,11 @@
               <input id="max_retries" name="max_retries" type="number" min="0" max="10" step="1" value="3" />
             </div>
             <div class="checkbox">
-              <input id="headless" name="headless" type="checkbox" checked />
-              <label for="headless">Run browser headlessly</label>
+              <input id="headless" name="headless" type="checkbox" />
+              <label for="headless">
+                Run browser headlessly
+                <span class="muted small">(reCAPTCHA often blocks headless — leave off if unsure)</span>
+              </label>
             </div>
           </div>
 

@@ -121,7 +121,7 @@ def api_submit():
     form_url = (data.get("form_url") or "").strip()
     raw_emails = data.get("emails") or ""
     delay = float(data.get("delay") or 0)
-    headless = bool(data.get("headless", True))
+    headless = bool(data.get("headless", False))
 
     if not form_url:
         return jsonify({"error": "form_url is required"}), 400

@@ -52,6 +52,39 @@ SUBMIT_XPATHS = [
 ]
 
 
+STEALTH_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+STEALTH_JS = r"""
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = window.chrome || { runtime: {} };
+Object.defineProperty(navigator, 'languages', {
+  get: () => ['en-US', 'en']
+});
+Object.defineProperty(navigator, 'plugins', {
+  get: () => [1, 2, 3, 4, 5]
+});
+const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
+if (originalQuery) {
+  window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : originalQuery(parameters);
+}
+try {
+  const getParameter = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function (parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.call(this, parameter);
+  };
+} catch (e) {}
+"""
+
+
 def _build_driver(
     headless: bool = True,
     proxy: Optional[ProxyConfig] = None,
@@ -67,6 +100,7 @@ def _build_driver(
     opts.add_argument("--window-size=1280,900")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--lang=en-US")
+    opts.add_argument(f"--user-agent={STEALTH_USER_AGENT}")
     opts.add_experimental_option(
         "excludeSwitches", ["enable-automation", "enable-logging"]
     )
@@ -87,9 +121,7 @@ def _build_driver(
     try:
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
-            {
-                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-            },
+            {"source": STEALTH_JS},
         )
     except WebDriverException:
         pass
