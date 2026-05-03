@@ -119,7 +119,21 @@ class RecaptchaSolver:
                 iframes = self.driver.find_elements(By.XPATH, CHALLENGE_IFRAME_XPATH)
                 visible = [f for f in iframes if self._iframe_visible(f)]
                 if visible:
-                    self.log("reCAPTCHA challenge iframe detected.")
+                    self.log(
+                        "reCAPTCHA challenge iframe detected — "
+                        "waiting 5s for it to settle before clicking audio ..."
+                    )
+                    time.sleep(5)
+                    self.driver.switch_to.default_content()
+                    iframes = self.driver.find_elements(
+                        By.XPATH, CHALLENGE_IFRAME_XPATH
+                    )
+                    visible = [f for f in iframes if self._iframe_visible(f)]
+                    if not visible:
+                        self.log(
+                            "Challenge iframe disappeared during wait; retrying detection."
+                        )
+                        continue
                     return self._solve_audio(visible[0])
             except WebDriverException:
                 pass
@@ -130,11 +144,8 @@ class RecaptchaSolver:
         try:
             self.driver.switch_to.frame(challenge_iframe)
 
-            self.log("Captcha popup opened — waiting 5s before clicking audio ...")
-            time.sleep(5)
-
             try:
-                audio_btn = WebDriverWait(self.driver, 5).until(
+                audio_btn = WebDriverWait(self.driver, 10).until(
                     EC.element_to_be_clickable((By.ID, "recaptcha-audio-button"))
                 )
                 audio_btn.click()

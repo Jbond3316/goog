@@ -311,10 +311,11 @@ def _attempt_submit(
                     "requires additional fields."
                 )
 
-        log(f"Submission confirmed for {email}.")
+        log(f"Submission confirmed for {email}. Holding browser open briefly ...")
+        time.sleep(2.5)
     finally:
         try:
-            time.sleep(0.3)
+            time.sleep(0.5)
             driver.quit()
         except Exception:
             pass
