@@ -31,6 +31,7 @@ from recaptcha_solver import (
     RecaptchaSolver,
 )
 from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
+from fingerprint import Fingerprint, build_stealth_js, random_fingerprint
 
 
 Logger = Callable[[str], None]
@@ -53,61 +54,37 @@ SUBMIT_XPATHS = [
 ]
 
 
-STEALTH_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
-
-
-STEALTH_JS = r"""
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-window.chrome = window.chrome || { runtime: {} };
-Object.defineProperty(navigator, 'languages', {
-  get: () => ['en-US', 'en']
-});
-Object.defineProperty(navigator, 'plugins', {
-  get: () => [1, 2, 3, 4, 5]
-});
-const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
-if (originalQuery) {
-  window.navigator.permissions.query = (parameters) =>
-    parameters.name === 'notifications'
-      ? Promise.resolve({ state: Notification.permission })
-      : originalQuery(parameters);
-}
-try {
-  const getParameter = WebGLRenderingContext.prototype.getParameter;
-  WebGLRenderingContext.prototype.getParameter = function (parameter) {
-    if (parameter === 37445) return 'Intel Inc.';
-    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-    return getParameter.call(this, parameter);
-  };
-} catch (e) {}
-"""
-
-
 def _build_driver(
     headless: bool = True,
     proxy: Optional[ProxyConfig] = None,
-) -> tuple[webdriver.Chrome, Optional[str], str]:
-    """Return (driver, proxy_extension_dir, user_data_dir).
+    fingerprint: Optional[Fingerprint] = None,
+) -> tuple[webdriver.Chrome, Optional[str], str, Fingerprint]:
+    """Return (driver, proxy_extension_dir, user_data_dir, fingerprint).
+
+    A fresh random fingerprint is generated for each browser unless
+    one is supplied. The fingerprint drives the user-agent, window
+    size, and a CDP-injected stealth script that overrides navigator
+    / screen / WebGL / canvas so repeated attempts don't look identical
+    to reCAPTCHA.
 
     The caller is responsible for cleaning up both directories
-    (``cleanup_extension`` + ``shutil.rmtree`` of the user-data-dir).
-    A unique user-data-dir per browser is required when running many
-    Chromes in parallel — otherwise Chrome's Singleton lock makes the
-    second launch hang or fail.
+    (``cleanup_extension`` + rmtree of the user-data-dir). A unique
+    user-data-dir per browser is required when running many Chromes
+    in parallel — otherwise Chrome's Singleton lock makes the second
+    launch hang or fail.
     """
+    fp = fingerprint or random_fingerprint()
+
     opts = ChromeOptions()
     if headless:
         opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1280,900")
+    opts.add_argument(f"--window-size={fp.window_width},{fp.window_height}")
     opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--lang=en-US")
-    opts.add_argument(f"--user-agent={STEALTH_USER_AGENT}")
+    opts.add_argument(f"--lang={fp.languages[0]}")
+    opts.add_argument(f"--user-agent={fp.user_agent}")
     opts.add_experimental_option(
         "excludeSwitches", ["enable-automation", "enable-logging"]
     )
@@ -128,14 +105,33 @@ def _build_driver(
             )
 
     driver = webdriver.Chrome(options=opts)
+
     try:
         driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": STEALTH_JS},
+            "Network.setUserAgentOverride",
+            {
+                "userAgent": fp.user_agent,
+                "acceptLanguage": fp.accept_language,
+                "platform": fp.ua_platform,
+            },
         )
     except WebDriverException:
         pass
-    return driver, ext_dir, user_data_dir
+    try:
+        driver.execute_cdp_cmd(
+            "Emulation.setTimezoneOverride",
+            {"timezoneId": fp.timezone},
+        )
+    except WebDriverException:
+        pass
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": build_stealth_js(fp)},
+        )
+    except WebDriverException:
+        pass
+    return driver, ext_dir, user_data_dir, fp
 
 
 def _find_submit_button(driver) -> Optional[object]:
@@ -254,7 +250,14 @@ def _attempt_submit(
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
-    driver, ext_dir, user_data_dir = _build_driver(headless=headless, proxy=proxy)
+    driver, ext_dir, user_data_dir, fp = _build_driver(
+        headless=headless, proxy=proxy
+    )
+    ua_short = fp.user_agent.split(") ", 1)[0] + ")"
+    log(
+        f"Fingerprint: {ua_short} | {fp.platform} | {fp.timezone} | "
+        f"{fp.screen_width}x{fp.screen_height} | GPU={fp.webgl_renderer[:40]}"
+    )
     try:
         if proxy is not None:
             log("Verifying proxy connectivity ...")
