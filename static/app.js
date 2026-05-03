@@ -72,12 +72,27 @@ form.addEventListener("submit", async (e) => {
   goBtn.textContent = "Running ...";
   resetUi(emails);
 
+  const proxy = {
+    enabled: document.getElementById("proxy_enabled").checked,
+    host: document.getElementById("proxy_host").value.trim(),
+    port: document.getElementById("proxy_port").value.trim(),
+    username: document.getElementById("proxy_username").value.trim(),
+    password: document.getElementById("proxy_password").value,
+    scheme: "http",
+  };
+
   let resp;
   try {
     resp = await fetch("/api/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ form_url, emails: rawEmails, delay, headless }),
+      body: JSON.stringify({
+        form_url,
+        emails: rawEmails,
+        delay,
+        headless,
+        proxy,
+      }),
     });
   } catch (err) {
     alert("Network error: " + err);

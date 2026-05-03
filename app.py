@@ -25,18 +25,27 @@ from typing import Dict
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from form_submitter import submit_form
+from proxy_support import ProxyConfig
 
 
 app = Flask(__name__)
 
 
 class Job:
-    def __init__(self, form_url: str, emails: list[str], delay: float, headless: bool):
+    def __init__(
+        self,
+        form_url: str,
+        emails: list[str],
+        delay: float,
+        headless: bool,
+        proxy: "ProxyConfig | None" = None,
+    ):
         self.id = uuid.uuid4().hex
         self.form_url = form_url
         self.emails = emails
         self.delay = delay
         self.headless = headless
+        self.proxy = proxy
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -67,6 +76,7 @@ def _run_job(job: Job) -> None:
             email=email,
             logger=log,
             headless=job.headless,
+            proxy=job.proxy,
         )
 
         if result.success:
@@ -123,7 +133,32 @@ def api_submit():
     if not emails:
         return jsonify({"error": "Provide at least one email"}), 400
 
-    job = Job(form_url=form_url, emails=emails, delay=delay, headless=headless)
+    proxy_cfg: ProxyConfig | None = None
+    proxy_data = data.get("proxy") or {}
+    if proxy_data and proxy_data.get("enabled"):
+        host = (proxy_data.get("host") or "").strip()
+        port_raw = str(proxy_data.get("port") or "").strip()
+        if not host or not port_raw:
+            return jsonify({"error": "Proxy host and port are required when enabled"}), 400
+        try:
+            port = int(port_raw)
+        except ValueError:
+            return jsonify({"error": "Proxy port must be an integer"}), 400
+        proxy_cfg = ProxyConfig(
+            host=host,
+            port=port,
+            username=(proxy_data.get("username") or "").strip(),
+            password=(proxy_data.get("password") or ""),
+            scheme=(proxy_data.get("scheme") or "http").strip() or "http",
+        )
+
+    job = Job(
+        form_url=form_url,
+        emails=emails,
+        delay=delay,
+        headless=headless,
+        proxy=proxy_cfg,
+    )
     with JOBS_LOCK:
         JOBS[job.id] = job
 

@@ -19,6 +19,10 @@ solved using the audio challenge, ported from
 - Optional headless toggle (useful for debugging)
 - Live progress streamed from the server via Server-Sent Events
 - Audio-captcha bypass using Google's own free speech recognition API
+- **Authenticated HTTP proxy support** — wires credentials into Chrome
+  via a generated `webRequest.onAuthRequired` extension (works out of
+  the box with providers like DataImpulse, Bright Data, etc.). Both
+  the form browser and the captcha-audio download go through the proxy.
 
 ## How it works
 
@@ -83,6 +87,10 @@ Paste:
 - **Emails** – one per line, or comma-separated.
 - **Delay** – seconds to wait between submissions.
 - **Headless** – untick to watch the browser actually solve the captcha.
+- **Proxy** – tick *Route through HTTP proxy* and fill host / port /
+  username / password. The inputs are pre-filled with DataImpulse
+  gateway defaults; change as needed. When enabled, both Chrome and
+  the captcha-audio download are routed through the proxy.
 
 Click **Start submissions**.
 

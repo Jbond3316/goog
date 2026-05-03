@@ -25,6 +25,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from recaptcha_solver import RecaptchaSolver, ANCHOR_IFRAME_XPATH
+from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 
 
 Logger = Callable[[str], None]
@@ -47,7 +48,12 @@ SUBMIT_XPATHS = [
 ]
 
 
-def _build_driver(headless: bool = True) -> webdriver.Chrome:
+def _build_driver(
+    headless: bool = True,
+    proxy: Optional[ProxyConfig] = None,
+) -> tuple[webdriver.Chrome, Optional[str]]:
+    """Return (driver, proxy_extension_dir). The caller is responsible for
+    cleaning up the extension directory with ``cleanup_extension``."""
     opts = ChromeOptions()
     if headless:
         opts.add_argument("--headless=new")
@@ -61,6 +67,17 @@ def _build_driver(headless: bool = True) -> webdriver.Chrome:
         "excludeSwitches", ["enable-automation", "enable-logging"]
     )
     opts.add_experimental_option("useAutomationExtension", False)
+
+    ext_dir: Optional[str] = None
+    if proxy is not None:
+        if proxy.username or proxy.password:
+            ext_dir = build_proxy_auth_extension(proxy)
+            opts.add_argument(f"--load-extension={ext_dir}")
+        else:
+            opts.add_argument(
+                f"--proxy-server={proxy.scheme}://{proxy.host}:{proxy.port}"
+            )
+
     driver = webdriver.Chrome(options=opts)
     try:
         driver.execute_cdp_cmd(
@@ -71,7 +88,7 @@ def _build_driver(headless: bool = True) -> webdriver.Chrome:
         )
     except WebDriverException:
         pass
-    return driver
+    return driver, ext_dir
 
 
 def _find_submit_button(driver) -> Optional[object]:
@@ -141,12 +158,15 @@ def submit_form(
     email: str,
     logger: Optional[Logger] = None,
     headless: bool = True,
+    proxy: Optional[ProxyConfig] = None,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response."""
     log: Logger = logger or (lambda msg: None)
     log(f"Opening form for {email} ...")
+    if proxy is not None:
+        log(f"Using proxy {proxy.host}:{proxy.port} (user={proxy.username or '-'})")
 
-    driver = _build_driver(headless=headless)
+    driver, ext_dir = _build_driver(headless=headless, proxy=proxy)
     try:
         driver.get(form_url)
 
@@ -159,7 +179,7 @@ def submit_form(
         email_input.send_keys(email)
         log(f"Filled email: {email}")
 
-        solver = RecaptchaSolver(driver, logger=log)
+        solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
 
         if _has_anchor_iframe(driver):
             log("Checkbox reCAPTCHA detected — clicking anchor first.")
@@ -209,3 +229,4 @@ def submit_form(
             driver.quit()
         except Exception:
             pass
+        cleanup_extension(ext_dir)

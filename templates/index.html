@@ -57,6 +57,35 @@
             </div>
           </div>
 
+          <fieldset class="proxy-box">
+            <legend>
+              <input id="proxy_enabled" type="checkbox" checked />
+              <label for="proxy_enabled">Route through HTTP proxy</label>
+            </legend>
+            <p class="muted small">
+              Recommended for avoiding Google's "Try again later" rate limit.
+              Pre-filled with DataImpulse gateway credentials.
+            </p>
+            <div class="proxy-grid">
+              <div>
+                <label for="proxy_host">Host</label>
+                <input id="proxy_host" type="text" value="gw.dataimpulse.com" />
+              </div>
+              <div>
+                <label for="proxy_port">Port</label>
+                <input id="proxy_port" type="number" min="1" max="65535" value="823" />
+              </div>
+              <div>
+                <label for="proxy_username">Username</label>
+                <input id="proxy_username" type="text" value="d513c88e609244a2dca4" />
+              </div>
+              <div>
+                <label for="proxy_password">Password</label>
+                <input id="proxy_password" type="password" value="468700c660e54b76" />
+              </div>
+            </div>
+          </fieldset>
+
           <button id="go" type="submit">Start submissions</button>
         </form>
       </section>

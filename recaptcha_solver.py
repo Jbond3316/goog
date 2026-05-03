@@ -42,6 +42,8 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from proxy_support import ProxyConfig
+
 
 ANCHOR_IFRAME_XPATH = "//iframe[contains(@title, 'reCAPTCHA')]"
 CHALLENGE_IFRAME_XPATH = "//iframe[contains(@title, 'recaptcha challenge')]"
@@ -50,9 +52,15 @@ CHALLENGE_IFRAME_XPATH = "//iframe[contains(@title, 'recaptcha challenge')]"
 class RecaptchaSolver:
     """Solve a Google reCAPTCHA v2 challenge using the audio challenge path."""
 
-    def __init__(self, driver: WebDriver, logger=print) -> None:
+    def __init__(
+        self,
+        driver: WebDriver,
+        logger=print,
+        proxy: Optional[ProxyConfig] = None,
+    ) -> None:
         self.driver = driver
         self.log = logger
+        self.proxy = proxy
 
     def click_anchor_if_visible(self, timeout: float = 3.0) -> bool:
         """Click the "I'm not a robot" checkbox if the anchor iframe exists
@@ -166,7 +174,8 @@ class RecaptchaSolver:
         wav_path = os.path.join(tmp_dir, f"recap_{suffix}.wav")
 
         try:
-            resp = requests.get(url, timeout=30)
+            proxies = self.proxy.as_requests_proxies() if self.proxy else None
+            resp = requests.get(url, timeout=30, proxies=proxies)
             resp.raise_for_status()
             with open(mp3_path, "wb") as f:
                 f.write(resp.content)
