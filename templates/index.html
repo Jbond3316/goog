@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google Form Auto-Submitter</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --border: #2e2e40;
+      --accent: #6c63ff;
+      --accent-hover: #7c74ff;
+      --accent-glow: rgba(108, 99, 255, 0.35);
+      --text: #e8e8f0;
+      --muted: #8888aa;
+      --success: #4ade80;
+      --error: #f87171;
+      --warning: #fbbf24;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    /* Animated background blobs */
+    body::before, body::after {
+      content: '';
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.18;
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::before {
+      width: 600px; height: 600px;
+      background: var(--accent);
+      top: -200px; left: -200px;
+      animation: drift1 14s ease-in-out infinite alternate;
+    }
+    body::after {
+      width: 500px; height: 500px;
+      background: #ff6b6b;
+      bottom: -150px; right: -150px;
+      animation: drift2 18s ease-in-out infinite alternate;
+    }
+    @keyframes drift1 { to { transform: translate(80px, 80px); } }
+    @keyframes drift2 { to { transform: translate(-60px, -60px); } }
+
+    .card {
+      position: relative;
+      z-index: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 48px 44px;
+      width: 100%;
+      max-width: 520px;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .logo-icon {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+    .logo-text h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+    .logo-text p { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(108,99,255,0.15);
+      border: 1px solid rgba(108,99,255,0.3);
+      color: #a78bfa;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 100px;
+      margin-bottom: 20px;
+    }
+    .badge-dot {
+      width: 6px; height: 6px;
+      background: #a78bfa;
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    h2 { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.2; margin-bottom: 6px; }
+    .subtitle { font-size: 0.9rem; color: var(--muted); margin-bottom: 36px; line-height: 1.5; }
+
+    .field { margin-bottom: 20px; }
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    input {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 0.95rem;
+      padding: 13px 16px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input::placeholder { color: var(--muted); opacity: 0.6; }
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .hint {
+      font-size: 0.76rem;
+      color: var(--muted);
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+
+    button[type="submit"] {
+      width: 100%;
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      margin-top: 8px;
+      letter-spacing: 0.01em;
+      transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+      box-shadow: 0 4px 24px var(--accent-glow);
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    button[type="submit"]:hover:not(:disabled) {
+      opacity: 0.92;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 32px var(--accent-glow);
+    }
+    button[type="submit"]:active:not(:disabled) { transform: translateY(0); }
+    button[type="submit"]:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Status panel */
+    #status-panel {
+      display: none;
+      margin-top: 24px;
+      border-radius: 12px;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+    }
+    #status-panel.running  { border-color: rgba(251,191,36,0.4);  background: rgba(251,191,36,0.06); }
+    #status-panel.success  { border-color: rgba(74,222,128,0.4);  background: rgba(74,222,128,0.06); }
+    #status-panel.error    { border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.06); }
+
+    .status-header {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 0.9rem; margin-bottom: 6px;
+    }
+    .status-icon { font-size: 1.1rem; }
+    #status-message { font-size: 0.86rem; color: var(--muted); line-height: 1.5; }
+
+    /* Spinner */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Progress steps */
+    .steps {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .step {
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px;
+      border-radius: 7px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .step.active  { color: var(--warning); background: rgba(251,191,36,0.07); }
+    .step.done    { color: var(--success); background: rgba(74,222,128,0.06); }
+    .step .s-icon { font-size: 0.85rem; width: 18px; text-align: center; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 28px 0;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 0.76rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .footer-note strong { color: var(--text); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <div class="logo-icon">🤖</div>
+      <div class="logo-text">
+        <h1>FormBot</h1>
+        <p>Automated Google Form Submitter</p>
+      </div>
+    </div>
+
+    <div class="badge"><span class="badge-dot"></span> Audio reCAPTCHA Bypass</div>
+
+    <h2>Submit a Google Form</h2>
+    <p class="subtitle">Paste a Google Form URL and your email. The bot will fill the form, solve the reCAPTCHA using the audio challenge, and submit it automatically.</p>
+
+    <form id="submit-form" novalidate>
+      <div class="field">
+        <label for="form_url">Google Form URL</label>
+        <input
+          id="form_url"
+          type="url"
+          placeholder="https://docs.google.com/forms/d/e/…/viewform"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        />
+        <p class="hint">Must be a public Google Form with an email field.</p>
+      </div>
+
+      <div class="field">
+        <label for="email">Email Address</label>
+        <input
+          id="email"
+          type="email"
+          placeholder="you@example.com"
+          autocomplete="email"
+          required
+        />
+      </div>
+
+      <button type="submit" id="submit-btn">
+        <span id="btn-text">Submit Form</span>
+      </button>
+    </form>
+
+    <div id="status-panel">
+      <div class="status-header">
+        <span class="status-icon" id="status-icon"></span>
+        <span id="status-title">Processing…</span>
+      </div>
+      <div id="status-message"></div>
+      <div class="steps" id="steps">
+        <div class="step" data-step="browser" >
+          <span class="s-icon">🌐</span> Opening browser &amp; form
+        </div>
+        <div class="step" data-step="email">
+          <span class="s-icon">✉️</span> Filling email field
+        </div>
+        <div class="step" data-step="captcha">
+          <span class="s-icon">🔊</span> Solving reCAPTCHA (audio)
+        </div>
+        <div class="step" data-step="submit">
+          <span class="s-icon">📤</span> Submitting form
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider" />
+    <p class="footer-note">
+      <strong>How it works:</strong> A headless Chromium browser navigates to your form,
+      switches the reCAPTCHA to the audio challenge, transcribes it with Google Speech,
+      and submits the response — all automatically.
+    </p>
+  </div>
+
+  <script>
+    const form        = document.getElementById('submit-form');
+    const btn         = document.getElementById('submit-btn');
+    const btnText     = document.getElementById('btn-text');
+    const panel       = document.getElementById('status-panel');
+    const statusTitle = document.getElementById('status-title');
+    const statusMsg   = document.getElementById('status-message');
+    const statusIcon  = document.getElementById('status-icon');
+    const allSteps    = document.querySelectorAll('.step');
+
+    const STEP_KEYWORDS = {
+      browser: ['Starting', 'Opening', 'browser'],
+      email:   ['email', 'Filling'],
+      captcha: ['reCAPTCHA', 'Captcha', 'audio', 'solving', 'Solving'],
+      submit:  ['Submitting', 'submit'],
+    };
+
+    function getActiveStep(message) {
+      for (const [step, keywords] of Object.entries(STEP_KEYWORDS)) {
+        if (keywords.some(k => message.toLowerCase().includes(k.toLowerCase()))) {
+          return step;
+        }
+      }
+      return null;
+    }
+
+    function markSteps(activeStep) {
+      let found = false;
+      allSteps.forEach(el => {
+        const s = el.dataset.step;
+        el.classList.remove('active', 'done');
+        if (s === activeStep) { el.classList.add('active'); found = true; }
+        else if (!found)       { el.classList.add('done'); }
+      });
+    }
+
+    function showPanel(state, title, message) {
+      panel.style.display = 'block';
+      panel.className = state;
+      statusTitle.textContent = title;
+      statusMsg.textContent   = message;
+
+      const icons = { running: '⏳', success: '✅', error: '❌' };
+      statusIcon.textContent = icons[state] || '•';
+
+      if (state === 'running') {
+        const active = getActiveStep(message);
+        if (active) markSteps(active);
+      } else if (state === 'success') {
+        allSteps.forEach(el => el.classList.replace('active','done') || el.classList.add('done'));
+      }
+    }
+
+    let pollTimer = null;
+
+    function pollStatus(jobId) {
+      fetch(`/status/${jobId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'running') {
+            showPanel('running', 'In progress…', data.message);
+            pollTimer = setTimeout(() => pollStatus(jobId), 1500);
+          } else if (data.status === 'success') {
+            showPanel('success', 'Done!', data.message);
+            resetBtn();
+          } else {
+            showPanel('error', 'Error', data.message);
+            resetBtn();
+          }
+        })
+        .catch(() => {
+          pollTimer = setTimeout(() => pollStatus(jobId), 2000);
+        });
+    }
+
+    function resetBtn() {
+      btn.disabled = false;
+      btnText.textContent = 'Submit Again';
+      const spinner = btn.querySelector('.spinner');
+      if (spinner) spinner.remove();
+    }
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const formUrl = document.getElementById('form_url').value.trim();
+      const email   = document.getElementById('email').value.trim();
+
+      if (!formUrl || !email) {
+        showPanel('error', 'Validation Error', 'Please fill in both fields.');
+        return;
+      }
+
+      btn.disabled = true;
+      btnText.textContent = 'Working…';
+      const spinner = document.createElement('div');
+      spinner.className = 'spinner';
+      btn.prepend(spinner);
+
+      allSteps.forEach(el => el.classList.remove('active','done'));
+      showPanel('running', 'Starting…', 'Launching browser…');
+
+      fetch('/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ form_url: formUrl, email }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) {
+            showPanel('error', 'Error', data.error);
+            resetBtn();
+          } else {
+            pollStatus(data.job_id);
+          }
+        })
+        .catch(err => {
+          showPanel('error', 'Network Error', err.message);
+          resetBtn();
+        });
+    });
+  </script>
+</body>
+</html>
