@@ -139,6 +139,10 @@ form textarea:focus {
   align-items: end;
 }
 
+.row-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .checkbox {
   display: flex;
   align-items: center;

@@ -46,22 +46,27 @@
             placeholder="alice@example.com&#10;bob@example.com"
           ></textarea>
 
-          <div class="row">
+          <div class="row row-3">
             <div>
-              <label for="delay">Delay between submissions (seconds)</label>
-              <input id="delay" name="delay" type="number" min="0" step="1" value="3" />
+              <label for="concurrency">Parallel browsers</label>
+              <input id="concurrency" name="concurrency" type="number" min="1" max="20" step="1" value="10" />
+            </div>
+            <div>
+              <label for="delay">Stagger between launches (seconds)</label>
+              <input id="delay" name="delay" type="number" min="0" step="1" value="1" />
             </div>
             <div>
               <label for="max_retries">Retries on "Try again later"</label>
               <input id="max_retries" name="max_retries" type="number" min="0" max="10" step="1" value="3" />
             </div>
-            <div class="checkbox">
-              <input id="headless" name="headless" type="checkbox" />
-              <label for="headless">
-                Run browser headlessly
-                <span class="muted small">(reCAPTCHA often blocks headless — leave off if unsure)</span>
-              </label>
-            </div>
+          </div>
+
+          <div class="checkbox" style="margin-top: 10px">
+            <input id="headless" name="headless" type="checkbox" />
+            <label for="headless">
+              Run browser headlessly
+              <span class="muted small">(reCAPTCHA often blocks headless — leave off if unsure)</span>
+            </label>
           </div>
 
           <fieldset class="proxy-box">

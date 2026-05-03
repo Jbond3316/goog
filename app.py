@@ -19,6 +19,7 @@ import queue
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Dict
 
@@ -40,6 +41,7 @@ class Job:
         headless: bool,
         proxy: "ProxyConfig | None" = None,
         max_retries: int = 2,
+        concurrency: int = 1,
     ):
         self.id = uuid.uuid4().hex
         self.form_url = form_url
@@ -48,6 +50,7 @@ class Job:
         self.headless = headless
         self.proxy = proxy
         self.max_retries = max_retries
+        self.concurrency = max(1, concurrency)
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -60,19 +63,16 @@ JOBS: Dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
 
 
-def _run_job(job: Job) -> None:
+def _submit_one(job: Job, idx: int, email: str) -> bool:
+    """Worker that runs one email through submit_form and emits progress.
+    Returns True on success."""
     total = len(job.emails)
-    job.emit("start", total=total, form_url=job.form_url)
+    job.emit("progress", index=idx, total=total, email=email, status="starting")
 
-    success = 0
-    failure = 0
+    def log(msg: str, _email=email, _idx=idx) -> None:
+        job.emit("log", index=_idx, total=total, email=_email, message=msg)
 
-    for idx, email in enumerate(job.emails, start=1):
-        job.emit("progress", index=idx, total=total, email=email, status="starting")
-
-        def log(msg: str, _email=email, _idx=idx) -> None:
-            job.emit("log", index=_idx, total=total, email=_email, message=msg)
-
+    try:
         result = submit_form(
             form_url=job.form_url,
             email=email,
@@ -81,32 +81,86 @@ def _run_job(job: Job) -> None:
             proxy=job.proxy,
             max_retries=job.max_retries,
         )
-
-        if result.success:
-            success += 1
-        else:
-            failure += 1
-
+    except Exception as exc:
+        log(f"Unhandled error: {exc}")
         job.emit(
             "result",
             index=idx,
             total=total,
             email=email,
-            success=result.success,
-            message=result.message,
+            success=False,
+            message=str(exc) or exc.__class__.__name__,
         )
+        return False
 
-        if idx < total and job.delay > 0:
-            job.emit(
-                "log",
-                index=idx,
-                total=total,
-                email=email,
-                message=f"Waiting {job.delay}s before next submission ...",
-            )
-            time.sleep(job.delay)
+    job.emit(
+        "result",
+        index=idx,
+        total=total,
+        email=email,
+        success=result.success,
+        message=result.message,
+    )
+    return result.success
 
-    job.emit("done", total=total, success=success, failure=failure)
+
+def _run_job(job: Job) -> None:
+    total = len(job.emails)
+    job.emit(
+        "start",
+        total=total,
+        form_url=job.form_url,
+        concurrency=job.concurrency,
+    )
+
+    if job.concurrency <= 1:
+        success = failure = 0
+        for idx, email in enumerate(job.emails, start=1):
+            ok = _submit_one(job, idx, email)
+            success += int(ok)
+            failure += int(not ok)
+            if idx < total and job.delay > 0:
+                job.emit(
+                    "log",
+                    index=idx,
+                    total=total,
+                    email=email,
+                    message=f"Waiting {job.delay}s before next submission ...",
+                )
+                time.sleep(job.delay)
+        job.emit("done", total=total, success=success, failure=failure)
+        job.done = True
+        return
+
+    stagger = job.delay if job.delay > 0 else 0.0
+    success_count = 0
+    failure_count = 0
+    counts_lock = threading.Lock()
+
+    def worker(idx: int, email: str) -> None:
+        nonlocal success_count, failure_count
+        ok = _submit_one(job, idx, email)
+        with counts_lock:
+            if ok:
+                success_count += 1
+            else:
+                failure_count += 1
+
+    with ThreadPoolExecutor(
+        max_workers=job.concurrency,
+        thread_name_prefix=f"submit-{job.id[:6]}",
+    ) as pool:
+        futures = []
+        for i, email in enumerate(job.emails, start=1):
+            if i > 1 and stagger > 0:
+                time.sleep(stagger)
+            futures.append(pool.submit(worker, i, email))
+        for f in futures:
+            f.result()
+
+    job.emit(
+        "done", total=total, success=success_count, failure=failure_count
+    )
     job.done = True
 
 
@@ -161,6 +215,12 @@ def api_submit():
         max_retries = 2
     max_retries = max(0, min(max_retries, 10))
 
+    try:
+        concurrency = int(data.get("concurrency", 1))
+    except (TypeError, ValueError):
+        concurrency = 1
+    concurrency = max(1, min(concurrency, 20))
+
     job = Job(
         form_url=form_url,
         emails=emails,
@@ -168,6 +228,7 @@ def api_submit():
         headless=headless,
         proxy=proxy_cfg,
         max_retries=max_retries,
+        concurrency=concurrency,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

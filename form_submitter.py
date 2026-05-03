@@ -9,6 +9,7 @@ fires from Submit click (common on Google Forms today).
 
 from __future__ import annotations
 
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -88,9 +89,15 @@ try {
 def _build_driver(
     headless: bool = True,
     proxy: Optional[ProxyConfig] = None,
-) -> tuple[webdriver.Chrome, Optional[str]]:
-    """Return (driver, proxy_extension_dir). The caller is responsible for
-    cleaning up the extension directory with ``cleanup_extension``."""
+) -> tuple[webdriver.Chrome, Optional[str], str]:
+    """Return (driver, proxy_extension_dir, user_data_dir).
+
+    The caller is responsible for cleaning up both directories
+    (``cleanup_extension`` + ``shutil.rmtree`` of the user-data-dir).
+    A unique user-data-dir per browser is required when running many
+    Chromes in parallel — otherwise Chrome's Singleton lock makes the
+    second launch hang or fail.
+    """
     opts = ChromeOptions()
     if headless:
         opts.add_argument("--headless=new")
@@ -105,6 +112,9 @@ def _build_driver(
         "excludeSwitches", ["enable-automation", "enable-logging"]
     )
     opts.add_experimental_option("useAutomationExtension", False)
+
+    user_data_dir = tempfile.mkdtemp(prefix="chrome_udd_")
+    opts.add_argument(f"--user-data-dir={user_data_dir}")
 
     ext_dir: Optional[str] = None
     if proxy is not None:
@@ -125,7 +135,7 @@ def _build_driver(
         )
     except WebDriverException:
         pass
-    return driver, ext_dir
+    return driver, ext_dir, user_data_dir
 
 
 def _find_submit_button(driver) -> Optional[object]:
@@ -244,7 +254,7 @@ def _attempt_submit(
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
-    driver, ext_dir = _build_driver(headless=headless, proxy=proxy)
+    driver, ext_dir, user_data_dir = _build_driver(headless=headless, proxy=proxy)
     try:
         if proxy is not None:
             log("Verifying proxy connectivity ...")
@@ -306,6 +316,7 @@ def _attempt_submit(
         except Exception:
             pass
         cleanup_extension(ext_dir)
+        cleanup_extension(user_data_dir)
 
 
 def submit_form(

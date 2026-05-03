@@ -61,6 +61,10 @@ form.addEventListener("submit", async (e) => {
     document.getElementById("max_retries").value || "2",
     10
   );
+  const concurrency = parseInt(
+    document.getElementById("concurrency").value || "1",
+    10
+  );
 
   const emails = rawEmails
     .split(/[\n,]+/)
@@ -97,6 +101,7 @@ form.addEventListener("submit", async (e) => {
         headless,
         proxy,
         max_retries,
+        concurrency,
       }),
     });
   } catch (err) {
@@ -133,7 +138,11 @@ form.addEventListener("submit", async (e) => {
     const { event } = payload;
 
     if (event === "start") {
-      appendLog(`Started — ${payload.total} email(s)`);
+      const c = payload.concurrency || 1;
+      appendLog(
+        `Started — ${payload.total} email(s)` +
+          (c > 1 ? `, ${c} parallel browser(s)` : "")
+      );
     } else if (event === "progress") {
       setBadge(payload.email, "running", "running");
       appendLog(`[${payload.index}/${payload.total}] ${payload.email}: starting`);

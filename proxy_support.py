@@ -111,6 +111,8 @@ def build_proxy_auth_extension(proxy: ProxyConfig) -> str:
 
 
 def cleanup_extension(path: Optional[str]) -> None:
+    """Recursively remove a directory. Safe for both the proxy-auth
+    extension and per-browser user-data-dirs."""
     if not path:
         return
     try:
