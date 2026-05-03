@@ -51,6 +51,10 @@
               <label for="delay">Delay between submissions (seconds)</label>
               <input id="delay" name="delay" type="number" min="0" step="1" value="3" />
             </div>
+            <div>
+              <label for="max_retries">Retries on "Try again later"</label>
+              <input id="max_retries" name="max_retries" type="number" min="0" max="10" step="1" value="3" />
+            </div>
             <div class="checkbox">
               <input id="headless" name="headless" type="checkbox" checked />
               <label for="headless">Run browser headlessly</label>
@@ -64,7 +68,10 @@
             </legend>
             <p class="muted small">
               Recommended for avoiding Google's "Try again later" rate limit.
-              Pre-filled with DataImpulse gateway credentials.
+              Pre-filled with DataImpulse gateway credentials. Each browser
+              restart opens a new TCP session, which forces a new exit IP.
+              Combine with the retry count on the right for automatic IP
+              rotation when Google blocks a session.
             </p>
             <div class="proxy-grid">
               <div>

@@ -24,7 +24,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from recaptcha_solver import RecaptchaSolver, ANCHOR_IFRAME_XPATH
+from recaptcha_solver import (
+    ANCHOR_IFRAME_XPATH,
+    RecaptchaBlockedError,
+    RecaptchaSolver,
+)
 from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 
 
@@ -199,19 +203,15 @@ def _confirmation_reached(driver) -> bool:
     return any(m.lower() in src.lower() for m in markers)
 
 
-def submit_form(
+def _attempt_submit(
     form_url: str,
     email: str,
-    logger: Optional[Logger] = None,
-    headless: bool = True,
-    proxy: Optional[ProxyConfig] = None,
-) -> SubmitResult:
-    """Fill the email field and submit a single Google Form response."""
-    log: Logger = logger or (lambda msg: None)
-    log(f"Opening form for {email} ...")
-    if proxy is not None:
-        log(f"Using proxy {proxy.host}:{proxy.port} (user={proxy.username or '-'})")
-
+    log: Logger,
+    headless: bool,
+    proxy: Optional[ProxyConfig],
+) -> None:
+    """Run one full submission attempt in a fresh browser. Raises on
+    failure; returns None on success."""
     driver, ext_dir = _build_driver(headless=headless, proxy=proxy)
     try:
         if proxy is not None:
@@ -262,21 +262,80 @@ def submit_form(
             if not _confirmation_reached(driver):
                 raise RuntimeError(
                     "Form did not reach a confirmation page. "
-                    "The captcha may have been rejected or the form requires "
-                    "additional fields."
+                    "The captcha may have been rejected or the form "
+                    "requires additional fields."
                 )
 
         log(f"Submission confirmed for {email}.")
-        return SubmitResult(email=email, success=True, message="Submitted successfully")
-
-    except Exception as exc:
-        log(f"Error submitting for {email}: {exc}")
-        msg = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
-        return SubmitResult(email=email, success=False, message=msg or exc.__class__.__name__)
     finally:
         try:
-            time.sleep(0.5)
+            time.sleep(0.3)
             driver.quit()
         except Exception:
             pass
         cleanup_extension(ext_dir)
+
+
+def submit_form(
+    form_url: str,
+    email: str,
+    logger: Optional[Logger] = None,
+    headless: bool = True,
+    proxy: Optional[ProxyConfig] = None,
+    max_retries: int = 2,
+    retry_backoff: float = 4.0,
+) -> SubmitResult:
+    """Fill the email field and submit a single Google Form response.
+
+    On ``RecaptchaBlockedError`` ("Try again later") we tear the browser
+    down (releasing the proxy's TCP session so the next connection gets
+    a fresh exit IP) and retry up to ``max_retries`` additional times.
+    """
+    log: Logger = logger or (lambda msg: None)
+    log(f"Opening form for {email} ...")
+    if proxy is not None:
+        log(
+            f"Using proxy {proxy.host}:{proxy.port} "
+            f"(user={proxy.username or '-'})"
+        )
+
+    total_attempts = max_retries + 1
+    for attempt in range(1, total_attempts + 1):
+        if attempt > 1:
+            log(f"Attempt {attempt}/{total_attempts} (rotating browser / proxy IP) ...")
+        try:
+            _attempt_submit(
+                form_url=form_url,
+                email=email,
+                log=log,
+                headless=headless,
+                proxy=proxy,
+            )
+            return SubmitResult(
+                email=email, success=True, message="Submitted successfully"
+            )
+        except RecaptchaBlockedError as exc:
+            log(f"Attempt {attempt}/{total_attempts} blocked: {exc}")
+            if attempt < total_attempts:
+                wait = retry_backoff * attempt
+                log(f"Waiting {wait:.1f}s before retry with a fresh IP ...")
+                time.sleep(wait)
+                continue
+            return SubmitResult(
+                email=email,
+                success=False,
+                message=(
+                    f"Blocked by Google after {total_attempts} attempt(s). "
+                    "Try a different proxy pool or wait before retrying."
+                ),
+            )
+        except Exception as exc:
+            log(f"Error submitting for {email}: {exc}")
+            msg = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+            return SubmitResult(
+                email=email, success=False, message=msg or exc.__class__.__name__
+            )
+
+    return SubmitResult(
+        email=email, success=False, message="No attempts were made."
+    )

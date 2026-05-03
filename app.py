@@ -39,6 +39,7 @@ class Job:
         delay: float,
         headless: bool,
         proxy: "ProxyConfig | None" = None,
+        max_retries: int = 2,
     ):
         self.id = uuid.uuid4().hex
         self.form_url = form_url
@@ -46,6 +47,7 @@ class Job:
         self.delay = delay
         self.headless = headless
         self.proxy = proxy
+        self.max_retries = max_retries
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -77,6 +79,7 @@ def _run_job(job: Job) -> None:
             logger=log,
             headless=job.headless,
             proxy=job.proxy,
+            max_retries=job.max_retries,
         )
 
         if result.success:
@@ -152,12 +155,19 @@ def api_submit():
             scheme=(proxy_data.get("scheme") or "http").strip() or "http",
         )
 
+    try:
+        max_retries = int(data.get("max_retries", 2))
+    except (TypeError, ValueError):
+        max_retries = 2
+    max_retries = max(0, min(max_retries, 10))
+
     job = Job(
         form_url=form_url,
         emails=emails,
         delay=delay,
         headless=headless,
         proxy=proxy_cfg,
+        max_retries=max_retries,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

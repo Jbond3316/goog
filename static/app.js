@@ -57,6 +57,10 @@ form.addEventListener("submit", async (e) => {
   const rawEmails = document.getElementById("emails").value;
   const delay = parseFloat(document.getElementById("delay").value || "0");
   const headless = document.getElementById("headless").checked;
+  const max_retries = parseInt(
+    document.getElementById("max_retries").value || "2",
+    10
+  );
 
   const emails = rawEmails
     .split(/[\n,]+/)
@@ -92,6 +96,7 @@ form.addEventListener("submit", async (e) => {
         delay,
         headless,
         proxy,
+        max_retries,
       }),
     });
   } catch (err) {

@@ -49,6 +49,14 @@ ANCHOR_IFRAME_XPATH = "//iframe[contains(@title, 'reCAPTCHA')]"
 CHALLENGE_IFRAME_XPATH = "//iframe[contains(@title, 'recaptcha challenge')]"
 
 
+class RecaptchaBlockedError(RuntimeError):
+    """Raised when Google blocks the session with 'Try again later'.
+
+    Callers should handle this by rotating to a fresh proxy session /
+    browser instance before retrying.
+    """
+
+
 class RecaptchaSolver:
     """Solve a Google reCAPTCHA v2 challenge using the audio challenge path."""
 
@@ -133,9 +141,9 @@ class RecaptchaSolver:
                 pass
 
             if self._is_detected():
-                raise RuntimeError(
+                raise RecaptchaBlockedError(
                     "Google flagged this session as bot traffic "
-                    "('Try again later'). Try a different IP or slow down."
+                    "('Try again later')."
                 )
 
             audio_src = (
@@ -158,7 +166,7 @@ class RecaptchaSolver:
             time.sleep(2.0)
 
             if self._is_detected():
-                raise RuntimeError(
+                raise RecaptchaBlockedError(
                     "Google rejected the audio response ('Try again later')."
                 )
 
