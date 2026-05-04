@@ -29,8 +29,11 @@ import time
 from typing import Optional
 
 import requests
+import urllib3
 from pydub import AudioSegment
 import speech_recognition as sr
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
@@ -197,7 +200,12 @@ class RecaptchaSolver:
 
         try:
             proxies = self.proxy.as_requests_proxies() if self.proxy else None
-            resp = requests.get(url, timeout=30, proxies=proxies)
+            resp = requests.get(
+                url,
+                timeout=30,
+                proxies=proxies,
+                verify=False,
+            )
             resp.raise_for_status()
             with open(mp3_path, "wb") as f:
                 f.write(resp.content)

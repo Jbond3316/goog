@@ -85,6 +85,10 @@ def _build_driver(
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument(f"--lang={fp.languages[0]}")
     opts.add_argument(f"--user-agent={fp.user_agent}")
+    opts.add_argument("--ignore-certificate-errors")
+    opts.add_argument("--ignore-ssl-errors=yes")
+    opts.add_argument("--allow-insecure-localhost")
+    opts.set_capability("acceptInsecureCerts", True)
     opts.add_experimental_option(
         "excludeSwitches", ["enable-automation", "enable-logging"]
     )
