@@ -12,20 +12,38 @@ app = Flask(__name__)
 jobs: dict = {}
 
 
+def _find_chrome() -> str:
+    """Return the path to the Chrome/Chromium binary available on this system."""
+    candidates = [
+        "/usr/local/bin/google-chrome",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return "google-chrome"  # fall back and let the OS resolve it
+
+
 def run_form_submission(job_id: str, form_url: str, email: str) -> None:
     """Background thread: open the Google Form, fill email, solve reCAPTCHA, submit."""
     jobs[job_id] = {"status": "running", "message": "Starting browser…"}
 
     try:
         options = ChromiumOptions()
+        options.set_browser_path(_find_chrome())
+        # Each job gets its own free debugging port — avoids the 404 handshake error
+        options.auto_port()
         options.set_argument("--no-sandbox")
         options.set_argument("--disable-dev-shm-usage")
         options.set_argument("--disable-gpu")
-        # Run headless in a real server environment
         options.set_argument("--headless=new")
         options.set_argument("--window-size=1280,800")
-        # Required for audio playback pipeline (even headless)
         options.set_argument("--autoplay-policy=no-user-gesture-required")
+        # Suppress "DevTools listening on..." noise
+        options.set_argument("--log-level=3")
 
         driver = ChromiumPage(addr_or_opts=options)
 
@@ -34,16 +52,15 @@ def run_form_submission(job_id: str, form_url: str, email: str) -> None:
             driver.get(form_url)
             time.sleep(2)
 
-            # Fill the email field – Google Forms email inputs have
-            # aria-label="Email" or type="email"
+            # Fill the email field — try several selector strategies Google Forms uses
             jobs[job_id]["message"] = "Filling email field…"
-            email_input = driver.ele("xpath://input[@type='email']")
-            if email_input is None:
-                # Some forms use a text input with 'email' in the label
-                email_input = driver.ele(
-                    "xpath://input[contains(@aria-label,'mail') or contains(@aria-label,'mail')]"
-                )
-            if email_input is None:
+            email_input = (
+                driver.ele("xpath://input[@type='email']", timeout=5)
+                or driver.ele("xpath://input[contains(@aria-label,'mail')]", timeout=3)
+                or driver.ele("xpath://input[contains(@aria-label,'Email')]", timeout=3)
+                or driver.ele("xpath://input[@jsname]", timeout=3)
+            )
+            if not email_input:
                 raise Exception("Could not locate the email input field.")
             email_input.clear()
             email_input.input(email)
@@ -54,12 +71,14 @@ def run_form_submission(job_id: str, form_url: str, email: str) -> None:
             solver = RecaptchaSolver(driver)
             solver.solveCaptcha()
 
-            # Click the Submit button
+            # Click the Submit button — Google Forms uses several markup patterns
             jobs[job_id]["message"] = "Submitting form…"
-            submit_btn = driver.ele("xpath://span[text()='Submit']/ancestor::div[@role='button']")
-            if submit_btn is None:
-                submit_btn = driver.ele("xpath://div[@role='button' and .//span[contains(text(),'Submit')]]")
-            if submit_btn is None:
+            submit_btn = (
+                driver.ele("xpath://div[@role='button' and .//span[text()='Submit']]", timeout=5)
+                or driver.ele("xpath://div[@role='button' and .//span[contains(text(),'Submit')]]", timeout=3)
+                or driver.ele("xpath://span[text()='Submit']", timeout=3)
+            )
+            if not submit_btn:
                 raise Exception("Could not locate the Submit button.")
             submit_btn.click()
             time.sleep(2)
