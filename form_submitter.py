@@ -9,6 +9,7 @@ fires from Submit click (common on Google Forms today).
 
 from __future__ import annotations
 
+import random
 import tempfile
 import time
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from selenium.common.exceptions import (
     WebDriverException,
 )
 from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -150,7 +152,12 @@ def _find_submit_button(driver) -> Optional[object]:
     return None
 
 
-def _click_submit(driver, log: Logger) -> bool:
+def _click_submit(
+    driver,
+    log: Logger,
+    rng: Optional[random.Random] = None,
+) -> bool:
+    rng = rng or random.Random()
     try:
         btn = WebDriverWait(driver, 10).until(lambda d: _find_submit_button(d))
     except TimeoutException:
@@ -162,10 +169,16 @@ def _click_submit(driver, log: Logger) -> bool:
         )
     except WebDriverException:
         pass
+    time.sleep(rng.uniform(0.4, 1.1))
     try:
-        btn.click()
+        ActionChains(driver).move_to_element(btn).pause(
+            rng.uniform(0.2, 0.5)
+        ).click(btn).perform()
     except WebDriverException:
-        driver.execute_script("arguments[0].click();", btn)
+        try:
+            btn.click()
+        except WebDriverException:
+            driver.execute_script("arguments[0].click();", btn)
     log("Clicked Submit.")
     return True
 
@@ -228,21 +241,59 @@ def _verify_proxy(driver, proxy: ProxyConfig, log: Logger) -> None:
 
 
 def _confirmation_reached(driver) -> bool:
-    url = driver.current_url or ""
-    if "formResponse" in url:
-        return True
+    """Strict confirmation: the only reliable signal is the URL
+    transition from `/viewform` to `/formResponse`.
+
+    We intentionally DO NOT match 'Your response has been recorded' in
+    the page source anymore — Google Forms puts similar text on the
+    viewform page (e.g. 'A copy of your responses will be emailed to
+    the address you provided'), which used to produce false-positive
+    successes where the form never actually submitted.
+    """
     try:
-        src = driver.page_source
+        url = driver.current_url or ""
     except WebDriverException:
         return False
-    markers = [
-        "Your response has been recorded",
-        "Your response was recorded",
-        "Thanks for submitting",
-        "Thank you for submitting",
-        "We've recorded",
-    ]
-    return any(m.lower() in src.lower() for m in markers)
+    return "formResponse" in url
+
+
+def _human_type(element, text: str, rng: random.Random) -> None:
+    """Type each character with a small randomized delay to mimic
+    real typing. Google Forms + reCAPTCHA v3 weight cadence heavily."""
+    for ch in text:
+        element.send_keys(ch)
+        time.sleep(rng.uniform(0.06, 0.18))
+        if rng.random() < 0.04:
+            time.sleep(rng.uniform(0.25, 0.6))
+
+
+def _human_mouse_warmup(driver, rng: random.Random) -> None:
+    """Move the cursor around the page a little before interacting.
+    reCAPTCHA v3 observes mouse movement and scoring improves noticeably
+    when there's any non-trivial motion before the critical click."""
+    try:
+        actions = ActionChains(driver)
+        for _ in range(rng.randint(2, 4)):
+            actions.move_by_offset(
+                rng.randint(-120, 120), rng.randint(-80, 80)
+            )
+            actions.pause(rng.uniform(0.1, 0.3))
+        actions.perform()
+    except WebDriverException:
+        pass
+
+
+def _scroll_a_bit(driver, rng: random.Random) -> None:
+    try:
+        driver.execute_script(
+            "window.scrollBy(0, arguments[0]);", rng.randint(80, 260)
+        )
+        time.sleep(rng.uniform(0.2, 0.6))
+        driver.execute_script(
+            "window.scrollBy(0, arguments[0]);", -rng.randint(40, 180)
+        )
+    except WebDriverException:
+        pass
 
 
 def _attempt_submit(
@@ -262,6 +313,7 @@ def _attempt_submit(
         f"Fingerprint: {ua_short} | {fp.platform} | {fp.timezone} | "
         f"{fp.screen_width}x{fp.screen_height} | GPU={fp.webgl_renderer[:40]}"
     )
+    rng = random.Random()
     try:
         if proxy is not None:
             log("Verifying proxy connectivity ...")
@@ -269,14 +321,27 @@ def _attempt_submit(
 
         driver.get(form_url)
 
+        time.sleep(rng.uniform(1.5, 3.0))
+        _human_mouse_warmup(driver, rng)
+        _scroll_a_bit(driver, rng)
+
         email_input = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located(
                 (By.XPATH, "//input[@type='email' or @type='text']")
             )
         )
+        try:
+            ActionChains(driver).move_to_element(email_input).pause(
+                rng.uniform(0.2, 0.5)
+            ).click(email_input).perform()
+        except WebDriverException:
+            email_input.click()
         email_input.clear()
-        email_input.send_keys(email)
+        _human_type(email_input, email, rng)
         log(f"Filled email: {email}")
+
+        time.sleep(rng.uniform(0.8, 1.8))
+        _human_mouse_warmup(driver, rng)
 
         solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
 
@@ -285,7 +350,7 @@ def _attempt_submit(
             solver.click_anchor_if_visible(timeout=5)
             solver.solve_challenge_if_present(timeout=8)
 
-        if not _click_submit(driver, log):
+        if not _click_submit(driver, log, rng):
             raise RuntimeError("Submit button not found on form.")
 
         log("Waiting for reCAPTCHA challenge (if any) after submit ...")
@@ -294,10 +359,11 @@ def _attempt_submit(
         if solved:
             log("Challenge solved. Pausing 3s before submitting form ...")
             time.sleep(3)
+            _human_mouse_warmup(driver, rng)
 
             log("Waiting to see if form auto-submits ...")
             auto_submitted = False
-            end = time.time() + 6
+            end = time.time() + 8
             while time.time() < end:
                 if _confirmation_reached(driver):
                     auto_submitted = True
@@ -306,20 +372,25 @@ def _attempt_submit(
 
             if not auto_submitted:
                 log("Form did not auto-submit; clicking Submit once more.")
-                _click_submit(driver, log)
+                _click_submit(driver, log, rng)
 
         try:
-            WebDriverWait(driver, 25).until(lambda d: _confirmation_reached(d))
+            WebDriverWait(driver, 30).until(lambda d: _confirmation_reached(d))
         except TimeoutException:
-            if not _confirmation_reached(driver):
-                raise RuntimeError(
-                    "Form did not reach a confirmation page. "
-                    "The captcha may have been rejected or the form "
-                    "requires additional fields."
-                )
+            pass
 
-        log(f"Submission confirmed for {email}. Holding browser open briefly ...")
-        time.sleep(2.5)
+        if not _confirmation_reached(driver):
+            raise RuntimeError(
+                "Form did not redirect to /formResponse — submission was "
+                "not accepted by Google (captcha score too low or form "
+                "requires additional fields)."
+            )
+
+        log(
+            f"Submission confirmed for {email} "
+            f"(URL: {driver.current_url}). Holding browser open briefly ..."
+        )
+        time.sleep(rng.uniform(2.5, 4.5))
     finally:
         try:
             time.sleep(0.5)
