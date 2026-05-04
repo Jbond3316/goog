@@ -292,7 +292,10 @@ def _attempt_submit(
         solved = solver.solve_challenge_if_present(timeout=10)
 
         if solved:
-            log("Challenge solved. Waiting to see if form auto-submits ...")
+            log("Challenge solved. Pausing 3s before submitting form ...")
+            time.sleep(3)
+
+            log("Waiting to see if form auto-submits ...")
             auto_submitted = False
             end = time.time() + 6
             while time.time() < end:
