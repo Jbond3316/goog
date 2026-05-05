@@ -183,6 +183,67 @@ def _click_submit(
     return True
 
 
+SEND_COPY_LABELS = (
+    "Send me a copy of my responses",
+    "Email me a copy of my responses",
+    "Send me a copy of my response",
+    "Email a copy of my responses to me",
+)
+
+
+def _tick_send_me_copy(driver, log: Logger) -> bool:
+    """If the form has the optional 'Send me a copy of my responses'
+    checkbox, click it. Some forms enable email confirmations only
+    when the respondent ticks this box, in which case skipping it
+    means the address never gets the receipt even though the
+    submission counted.
+
+    Returns True if the box was found and toggled on.
+    """
+    label_xpath = " or ".join(
+        f"contains(@aria-label, {repr(label)})" for label in SEND_COPY_LABELS
+    )
+    candidates_xpath = (
+        f"//div[@role='checkbox' and ({label_xpath})] | "
+        f"//*[@role='checkbox' and ({label_xpath})]"
+    )
+    text_xpath = " or ".join(
+        f"contains(., {repr(label)})" for label in SEND_COPY_LABELS
+    )
+    label_neighbour_xpath = (
+        f"//label[{text_xpath}]/preceding::*[@role='checkbox'][1] | "
+        f"//label[{text_xpath}]/following::*[@role='checkbox'][1]"
+    )
+
+    for xp in (candidates_xpath, label_neighbour_xpath):
+        try:
+            elems = driver.find_elements(By.XPATH, xp)
+        except WebDriverException:
+            continue
+        for el in elems:
+            try:
+                if not el.is_displayed():
+                    continue
+                aria_checked = (el.get_attribute("aria-checked") or "").lower()
+                if aria_checked == "true":
+                    log("'Send me a copy' was already checked.")
+                    return True
+                driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});", el
+                )
+                time.sleep(0.4)
+                try:
+                    el.click()
+                except WebDriverException:
+                    driver.execute_script("arguments[0].click();", el)
+                log("Ticked 'Send me a copy of my responses'.")
+                time.sleep(0.4)
+                return True
+            except WebDriverException:
+                continue
+    return False
+
+
 def _has_anchor_iframe(driver) -> bool:
     try:
         driver.switch_to.default_content()
@@ -302,6 +363,7 @@ def _attempt_submit(
     log: Logger,
     headless: bool,
     proxy: Optional[ProxyConfig],
+    send_me_copy: bool = True,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
@@ -342,6 +404,10 @@ def _attempt_submit(
 
         time.sleep(rng.uniform(0.8, 1.8))
         _human_mouse_warmup(driver, rng)
+
+        if send_me_copy:
+            if not _tick_send_me_copy(driver, log):
+                log("'Send me a copy' option not present on this form.")
 
         solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
 
@@ -409,6 +475,7 @@ def submit_form(
     proxy: Optional[ProxyConfig] = None,
     max_retries: int = 2,
     retry_backoff: float = 4.0,
+    send_me_copy: bool = True,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -435,6 +502,7 @@ def submit_form(
                 log=log,
                 headless=headless,
                 proxy=proxy,
+                send_me_copy=send_me_copy,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

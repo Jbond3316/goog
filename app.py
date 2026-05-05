@@ -42,6 +42,7 @@ class Job:
         proxy: "ProxyConfig | None" = None,
         max_retries: int = 2,
         concurrency: int = 1,
+        send_me_copy: bool = True,
     ):
         self.id = uuid.uuid4().hex
         self.form_url = form_url
@@ -51,6 +52,7 @@ class Job:
         self.proxy = proxy
         self.max_retries = max_retries
         self.concurrency = max(1, concurrency)
+        self.send_me_copy = send_me_copy
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -80,6 +82,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             headless=job.headless,
             proxy=job.proxy,
             max_retries=job.max_retries,
+            send_me_copy=job.send_me_copy,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -221,6 +224,8 @@ def api_submit():
         concurrency = 1
     concurrency = max(1, min(concurrency, 20))
 
+    send_me_copy = bool(data.get("send_me_copy", True))
+
     job = Job(
         form_url=form_url,
         emails=emails,
@@ -229,6 +234,7 @@ def api_submit():
         proxy=proxy_cfg,
         max_retries=max_retries,
         concurrency=concurrency,
+        send_me_copy=send_me_copy,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

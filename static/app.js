@@ -65,6 +65,7 @@ form.addEventListener("submit", async (e) => {
     document.getElementById("concurrency").value || "1",
     10
   );
+  const send_me_copy = document.getElementById("send_me_copy").checked;
 
   const emails = rawEmails
     .split(/[\n,]+/)
@@ -102,6 +103,7 @@ form.addEventListener("submit", async (e) => {
         proxy,
         max_retries,
         concurrency,
+        send_me_copy,
       }),
     });
   } catch (err) {
