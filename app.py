@@ -15,6 +15,7 @@ to the browser via Server-Sent Events.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -27,6 +28,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 
 from form_submitter import submit_form
 from proxy_support import ProxyConfig
+from inbox_verifier import InboxConfig, test_login as imap_test_login
 
 
 app = Flask(__name__)
@@ -43,6 +45,8 @@ class Job:
         max_retries: int = 2,
         concurrency: int = 1,
         send_me_copy: bool = True,
+        inbox: "InboxConfig | None" = None,
+        inbox_timeout: float = 120.0,
     ):
         self.id = uuid.uuid4().hex
         self.form_url = form_url
@@ -53,6 +57,8 @@ class Job:
         self.max_retries = max_retries
         self.concurrency = max(1, concurrency)
         self.send_me_copy = send_me_copy
+        self.inbox = inbox
+        self.inbox_timeout = inbox_timeout
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -83,6 +89,8 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             proxy=job.proxy,
             max_retries=job.max_retries,
             send_me_copy=job.send_me_copy,
+            inbox=job.inbox,
+            inbox_timeout=job.inbox_timeout,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -167,9 +175,43 @@ def _run_job(job: Job) -> None:
     job.done = True
 
 
+def _parse_inbox(d: dict) -> tuple["InboxConfig | None", float]:
+    if not d or not d.get("enabled"):
+        return None, 120.0
+    username = (d.get("username") or os.getenv("IMAP_USERNAME") or "").strip()
+    password = d.get("password") or os.getenv("IMAP_PASSWORD") or ""
+    cfg = InboxConfig(
+        host=(d.get("host") or "imap.gmail.com").strip(),
+        port=int(d.get("port") or 993),
+        username=username,
+        password=password,
+        use_ssl=bool(d.get("use_ssl", True)),
+        mailbox=(d.get("mailbox") or "INBOX").strip(),
+    )
+    timeout = float(d.get("timeout") or 120)
+    return cfg, max(15.0, min(timeout, 600.0))
+
+
 @app.get("/")
 def index() -> str:
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        default_imap_username=os.getenv("IMAP_USERNAME", ""),
+        default_imap_password_set=bool(os.getenv("IMAP_PASSWORD")),
+    )
+
+
+@app.post("/api/test_inbox")
+def api_test_inbox():
+    data = request.get_json(force=True, silent=True) or {}
+    cfg, _ = _parse_inbox({**data, "enabled": True})
+    if cfg is None or not cfg.is_configured:
+        return jsonify({"ok": False, "error": "Username and password required"}), 400
+    try:
+        imap_test_login(cfg)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+    return jsonify({"ok": True, "message": f"Logged in to {cfg.username} OK"})
 
 
 @app.post("/api/submit")
@@ -226,6 +268,8 @@ def api_submit():
 
     send_me_copy = bool(data.get("send_me_copy", True))
 
+    inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
+
     job = Job(
         form_url=form_url,
         emails=emails,
@@ -235,6 +279,8 @@ def api_submit():
         max_retries=max_retries,
         concurrency=concurrency,
         send_me_copy=send_me_copy,
+        inbox=inbox_cfg,
+        inbox_timeout=inbox_timeout,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

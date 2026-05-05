@@ -1,5 +1,7 @@
 const form = document.getElementById("submit-form");
 const goBtn = document.getElementById("go");
+const imapTestBtn = document.getElementById("imap_test");
+const imapTestStatus = document.getElementById("imap_test_status");
 const statusCard = document.getElementById("status-card");
 const resultsEl = document.getElementById("results");
 const logEl = document.getElementById("log");
@@ -90,6 +92,20 @@ form.addEventListener("submit", async (e) => {
     scheme: "http",
   };
 
+  const inbox = {
+    enabled: document.getElementById("inbox_enabled").checked,
+    host: document.getElementById("imap_host").value.trim(),
+    port: parseInt(document.getElementById("imap_port").value || "993", 10),
+    username: document.getElementById("imap_username").value.trim(),
+    password: document.getElementById("imap_password").value,
+    timeout: parseInt(
+      document.getElementById("imap_timeout").value || "120",
+      10
+    ),
+    use_ssl: true,
+    mailbox: "INBOX",
+  };
+
   let resp;
   try {
     resp = await fetch("/api/submit", {
@@ -104,6 +120,7 @@ form.addEventListener("submit", async (e) => {
         max_retries,
         concurrency,
         send_me_copy,
+        inbox,
       }),
     });
   } catch (err) {
@@ -186,3 +203,38 @@ form.addEventListener("submit", async (e) => {
     }
   };
 });
+
+if (imapTestBtn) {
+  imapTestBtn.addEventListener("click", async () => {
+    const payload = {
+      host: document.getElementById("imap_host").value.trim(),
+      port: parseInt(document.getElementById("imap_port").value || "993", 10),
+      username: document.getElementById("imap_username").value.trim(),
+      password: document.getElementById("imap_password").value,
+      use_ssl: true,
+    };
+    imapTestStatus.textContent = "Testing ...";
+    imapTestStatus.style.color = "";
+    imapTestBtn.disabled = true;
+    try {
+      const r = await fetch("/api/test_inbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        imapTestStatus.textContent = j.message || "OK";
+        imapTestStatus.style.color = "var(--ok)";
+      } else {
+        imapTestStatus.textContent = j.error || "Login failed";
+        imapTestStatus.style.color = "var(--err)";
+      }
+    } catch (e) {
+      imapTestStatus.textContent = "Network error: " + e;
+      imapTestStatus.style.color = "var(--err)";
+    } finally {
+      imapTestBtn.disabled = false;
+    }
+  });
+}

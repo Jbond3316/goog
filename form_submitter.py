@@ -13,6 +13,7 @@ import random
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from selenium import webdriver
@@ -34,6 +35,7 @@ from recaptcha_solver import (
 )
 from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 from fingerprint import Fingerprint, build_stealth_js, random_fingerprint
+from inbox_verifier import InboxConfig, wait_for_receipt
 
 
 Logger = Callable[[str], None]
@@ -364,6 +366,9 @@ def _attempt_submit(
     headless: bool,
     proxy: Optional[ProxyConfig],
     send_me_copy: bool = True,
+    inbox: Optional[InboxConfig] = None,
+    inbox_timeout: float = 120.0,
+    submit_started_at: Optional[datetime] = None,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
@@ -453,10 +458,29 @@ def _attempt_submit(
             )
 
         log(
-            f"Submission confirmed for {email} "
+            f"Form submission accepted by Google for {email} "
             f"(URL: {driver.current_url}). Holding browser open briefly ..."
         )
         time.sleep(rng.uniform(2.5, 4.5))
+
+        if inbox is not None and inbox.is_configured:
+            since = submit_started_at or datetime.now(timezone.utc)
+            since = since.replace(second=0, microsecond=0)
+            receipt = wait_for_receipt(
+                inbox,
+                recipient=email,
+                since=since,
+                timeout=inbox_timeout,
+                logger=log,
+            )
+            if receipt is None:
+                raise RuntimeError(
+                    f"Form was accepted but no receipt arrived in inbox "
+                    f"{inbox.username} within {int(inbox_timeout)}s. "
+                    "Either the form's 'Send me a copy' opt-in wasn't "
+                    "ticked, the form is set to 'never send receipts', "
+                    "or Gmail throttled the receipt."
+                )
     finally:
         try:
             time.sleep(0.5)
@@ -476,6 +500,8 @@ def submit_form(
     max_retries: int = 2,
     retry_backoff: float = 4.0,
     send_me_copy: bool = True,
+    inbox: Optional[InboxConfig] = None,
+    inbox_timeout: float = 120.0,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -495,6 +521,7 @@ def submit_form(
     for attempt in range(1, total_attempts + 1):
         if attempt > 1:
             log(f"Attempt {attempt}/{total_attempts} (rotating browser / proxy IP) ...")
+        attempt_start = datetime.now(timezone.utc)
         try:
             _attempt_submit(
                 form_url=form_url,
@@ -503,6 +530,9 @@ def submit_form(
                 headless=headless,
                 proxy=proxy,
                 send_me_copy=send_me_copy,
+                inbox=inbox,
+                inbox_timeout=inbox_timeout,
+                submit_started_at=attempt_start,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

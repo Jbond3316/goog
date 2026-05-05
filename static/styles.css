@@ -179,6 +179,21 @@ button:disabled {
   transform: none;
 }
 
+.ghost-btn {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: none;
+}
+
+.ghost-btn:hover {
+  transform: none;
+  border-color: var(--accent);
+}
+
 .status-head {
   display: flex;
   justify-content: space-between;

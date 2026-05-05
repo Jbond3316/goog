@@ -79,6 +79,52 @@
 
           <fieldset class="proxy-box">
             <legend>
+              <input id="inbox_enabled" type="checkbox" />
+              <label for="inbox_enabled">Verify delivery via IMAP</label>
+            </legend>
+            <p class="muted small">
+              After Google accepts each form, log in to a Gmail / IMAP
+              inbox and wait for the receipt email from
+              <code>forms-receipts-noreply@google.com</code>. If the
+              receipt never arrives within the timeout, the submission
+              is marked <strong>failed</strong>. Useful to catch silent
+              drops where the response counter goes up but no email
+              actually lands.
+              <br />
+              <strong>Gmail:</strong> requires 2-Step Verification + a
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">16-character App Password</a>
+              (regular passwords are rejected).
+            </p>
+            <div class="proxy-grid">
+              <div>
+                <label for="imap_host">Host</label>
+                <input id="imap_host" type="text" value="imap.gmail.com" />
+              </div>
+              <div>
+                <label for="imap_port">Port</label>
+                <input id="imap_port" type="number" min="1" max="65535" value="993" />
+              </div>
+              <div>
+                <label for="imap_username">Username</label>
+                <input id="imap_username" type="text" value="{{ default_imap_username }}" placeholder="you@gmail.com" />
+              </div>
+              <div>
+                <label for="imap_password">App password</label>
+                <input id="imap_password" type="password" placeholder="{{ '••• loaded from $IMAP_PASSWORD' if default_imap_password_set else '16-char app password' }}" />
+              </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:14px; margin-top:10px">
+              <div style="display:flex; align-items:center; gap:8px">
+                <label for="imap_timeout" style="margin:0">Wait per email (s)</label>
+                <input id="imap_timeout" type="number" min="15" max="600" step="5" value="120" style="width:80px" />
+              </div>
+              <button type="button" id="imap_test" class="ghost-btn">Test login</button>
+              <span id="imap_test_status" class="muted small"></span>
+            </div>
+          </fieldset>
+
+          <fieldset class="proxy-box">
+            <legend>
               <input id="proxy_enabled" type="checkbox" checked />
               <label for="proxy_enabled">Route through HTTP proxy</label>
             </legend>
