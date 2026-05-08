@@ -27,7 +27,7 @@ from typing import Dict
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from form_submitter import submit_form
-from proxy_support import ProxyConfig
+from proxy_support import ProxyConfig, RemoteBrowserConfig
 from inbox_verifier import InboxConfig, test_login as imap_test_login
 import google_signin
 
@@ -49,6 +49,7 @@ class Job:
         inbox: "InboxConfig | None" = None,
         inbox_timeout: float = 120.0,
         use_signed_in_profile: bool = False,
+        remote: "RemoteBrowserConfig | None" = None,
     ):
         self.id = uuid.uuid4().hex
         self.form_urls = form_urls
@@ -62,6 +63,7 @@ class Job:
         self.inbox = inbox
         self.inbox_timeout = inbox_timeout
         self.use_signed_in_profile = use_signed_in_profile
+        self.remote = remote
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -116,6 +118,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             inbox=job.inbox,
             inbox_timeout=job.inbox_timeout,
             use_signed_in_profile=job.use_signed_in_profile,
+            remote=job.remote,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -370,6 +373,33 @@ def api_submit():
 
     send_me_copy = bool(data.get("send_me_copy", True))
     use_signed_in_profile = bool(data.get("use_signed_in_profile", False))
+
+    remote_data = data.get("remote") or {}
+    remote_cfg: RemoteBrowserConfig | None = None
+    if remote_data.get("enabled"):
+        url = (remote_data.get("url") or "").strip()
+        if not url:
+            return jsonify({
+                "error": "Remote browser is enabled but the endpoint URL is empty."
+            }), 400
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return jsonify({
+                "error": (
+                    "Remote browser URL must be a full Selenium-compatible "
+                    "endpoint, e.g. https://user:pass@brd.superproxy.io:9515"
+                )
+            }), 400
+        remote_cfg = RemoteBrowserConfig(url=url)
+
+    if use_signed_in_profile and remote_cfg is not None:
+        return jsonify({
+            "error": (
+                "'Use signed-in profile' cannot be combined with a remote "
+                "browser endpoint — the saved Chrome profile lives on this "
+                "machine, the remote browser can't read it."
+            )
+        }), 400
+
     if use_signed_in_profile and not google_signin.has_master_profile():
         return jsonify({
             "error": (
@@ -392,6 +422,7 @@ def api_submit():
         inbox=inbox_cfg,
         inbox_timeout=inbox_timeout,
         use_signed_in_profile=use_signed_in_profile,
+        remote=remote_cfg,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

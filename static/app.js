@@ -111,6 +111,12 @@ form.addEventListener("submit", async (e) => {
     scheme: "http",
   };
 
+  const remoteEnabledEl = document.getElementById("remote_enabled");
+  const remote = {
+    enabled: remoteEnabledEl ? remoteEnabledEl.checked : false,
+    url: (document.getElementById("remote_url") || {}).value || "",
+  };
+
   const inbox = {
     enabled: document.getElementById("inbox_enabled").checked,
     host: document.getElementById("imap_host").value.trim(),
@@ -141,6 +147,7 @@ form.addEventListener("submit", async (e) => {
         send_me_copy,
         inbox,
         use_signed_in_profile,
+        remote,
       }),
     });
   } catch (err) {
@@ -343,6 +350,30 @@ if (signinClearBtn) {
 
 refreshSigninStatus();
 setInterval(refreshSigninStatus, 8000);
+
+// ----- mutual exclusivity: remote browser vs proxy / signed-in -----
+const remoteEnabledEl = document.getElementById("remote_enabled");
+const proxyEnabledEl = document.getElementById("proxy_enabled");
+
+function reflectRemoteState() {
+  const on = remoteEnabledEl && remoteEnabledEl.checked;
+  const proxyBox = proxyEnabledEl && proxyEnabledEl.closest("fieldset");
+  const signinBox = document.getElementById("use_signed_in")
+    ? document.getElementById("use_signed_in").closest("fieldset")
+    : null;
+  for (const box of [proxyBox, signinBox]) {
+    if (!box) continue;
+    box.style.opacity = on ? "0.45" : "";
+    for (const inp of box.querySelectorAll("input")) {
+      inp.disabled = on;
+    }
+  }
+}
+
+if (remoteEnabledEl) {
+  remoteEnabledEl.addEventListener("change", reflectRemoteState);
+  reflectRemoteState();
+}
 
 if (imapTestBtn) {
   imapTestBtn.addEventListener("click", async () => {

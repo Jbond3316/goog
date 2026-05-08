@@ -82,6 +82,33 @@
             </label>
           </div>
 
+          <fieldset class="proxy-box" id="remote-box">
+            <legend>
+              <input id="remote_enabled" type="checkbox" />
+              <label for="remote_enabled">Use remote browser endpoint</label>
+            </legend>
+            <p class="muted small">
+              Connect to a remote Selenium-compatible browser
+              (Bright Data Scraping Browser, Selenium Grid, etc.)
+              instead of launching local Chromes. The remote browser
+              handles its own egress IPs, captcha-friendly fingerprint,
+              and headless management. When this is on, the local
+              <strong>proxy</strong> and <strong>signed-in profile</strong>
+              sections are ignored.
+            </p>
+            <label for="remote_url">Selenium endpoint URL</label>
+            <input
+              id="remote_url"
+              type="text"
+              placeholder="https://user:pass@brd.superproxy.io:9515"
+              value="https://brd-customer-hl_3b648b8e-zone-scraping_browser1:udxq3gxw2cp4@brd.superproxy.io:9515"
+            />
+            <p class="muted small" style="margin: 8px 0 0">
+              Note: each parallel browser opens a separate billable
+              session on the remote provider.
+            </p>
+          </fieldset>
+
           <fieldset class="proxy-box">
             <legend>
               <span style="margin-left: 6px">Google sign-in</span>

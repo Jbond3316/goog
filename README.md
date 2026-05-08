@@ -22,6 +22,14 @@ solved using the audio challenge, ported from
 - Optional headless toggle (useful for debugging)
 - Live progress streamed from the server via Server-Sent Events
 - Audio-captcha bypass using Google's own free speech recognition API
+- **Remote browser endpoint support** — point the app at a Selenium-
+  compatible remote browser like
+  [Bright Data Scraping Browser](https://brightdata.com/products/scraping-browser)
+  or any Selenium Grid hub. Each parallel submission opens a
+  separate remote session; egress IP, fingerprint, and headless
+  management are all handled by the provider. When this is on, the
+  local proxy and signed-in-profile features are disabled (they
+  rely on the local filesystem and a local Chrome process).
 - **Authenticated HTTP proxy support** — wires credentials into Chrome
   via a generated `webRequest.onAuthRequired` extension (works out of
   the box with providers like DataImpulse, Bright Data, etc.). Both
