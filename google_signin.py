@@ -144,14 +144,15 @@ def _build_signin_driver(
     opts.add_argument(f"--user-data-dir={profile_dir}")
 
     ext_dir: Optional[str] = None
-    if proxy is not None and (proxy.username or proxy.password):
-        ext_dir = build_proxy_auth_extension(proxy)
-        opts.add_argument(f"--load-extension={ext_dir}")
-        opts.add_argument(f"--disable-extensions-except={ext_dir}")
-    elif proxy is not None:
+    if proxy is not None:
         opts.add_argument(
             f"--proxy-server={proxy.scheme}://{proxy.host}:{proxy.port}"
         )
+        opts.add_argument("--proxy-bypass-list=<-loopback>")
+        if proxy.username or proxy.password:
+            ext_dir = build_proxy_auth_extension(proxy)
+            opts.add_argument(f"--load-extension={ext_dir}")
+            opts.add_argument(f"--disable-extensions-except={ext_dir}")
 
     driver = webdriver.Chrome(options=opts)
     try:

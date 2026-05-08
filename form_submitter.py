@@ -110,14 +110,25 @@ def _build_driver(
 
     ext_dir: Optional[str] = None
     if proxy is not None:
+        # CRITICAL: always pass --proxy-server at the command line so
+        # the proxy is in effect for the FIRST network request Chrome
+        # makes, before the auth extension has had a chance to apply
+        # chrome.proxy.settings.set() asynchronously. Without this flag
+        # there is a race window during which Chrome's startup traffic
+        # (and even the very first driver.get) can egress through the
+        # local network instead of the proxy — leaking the real IP.
+        opts.add_argument(
+            f"--proxy-server={proxy.scheme}://{proxy.host}:{proxy.port}"
+        )
+        # Don't bypass the proxy for any non-loopback target.
+        opts.add_argument("--proxy-bypass-list=<-loopback>")
         if proxy.username or proxy.password:
+            # The extension exists ONLY to answer
+            # webRequest.onAuthRequired with the proxy credentials.
+            # Chrome doesn't accept user:pass embedded in --proxy-server.
             ext_dir = build_proxy_auth_extension(proxy)
             opts.add_argument(f"--load-extension={ext_dir}")
             opts.add_argument(f"--disable-extensions-except={ext_dir}")
-        else:
-            opts.add_argument(
-                f"--proxy-server={proxy.scheme}://{proxy.host}:{proxy.port}"
-            )
 
     driver = webdriver.Chrome(options=opts)
 
