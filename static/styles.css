@@ -251,8 +251,8 @@ button:disabled {
 }
 
 .results li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
@@ -260,6 +260,12 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 10px;
   font-size: 14px;
+}
+
+.results li .row-meta {
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 }
 
 .results li .email {

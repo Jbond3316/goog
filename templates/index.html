@@ -28,14 +28,19 @@
         </p>
 
         <form id="submit-form" autocomplete="off">
-          <label for="form_url">Google Form URL</label>
-          <input
-            id="form_url"
-            name="form_url"
-            type="url"
+          <label for="form_urls">
+            Google Form URL(s)
+            <span class="muted">(one per line; emails are distributed
+            round-robin: email&nbsp;1&rarr;form&nbsp;1, email&nbsp;2&rarr;form&nbsp;2,
+            email&nbsp;3&rarr;form&nbsp;1, …)</span>
+          </label>
+          <textarea
+            id="form_urls"
+            name="form_urls"
+            rows="3"
             required
-            placeholder="https://docs.google.com/forms/d/e/.../viewform"
-          />
+            placeholder="https://docs.google.com/forms/d/e/.../viewform&#10;https://docs.google.com/forms/d/e/.../viewform"
+          ></textarea>
 
           <label for="emails">Emails <span class="muted">(one per line or comma-separated)</span></label>
           <textarea

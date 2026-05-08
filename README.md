@@ -14,6 +14,9 @@ solved using the audio challenge, ported from
 ## Features
 
 - Clean, modern single-page UI
+- Multiple form URLs per batch with **round-robin pairing** between
+  emails and forms (email 1 → form 1, email 2 → form 2, email 3 →
+  form 1, …). Single-form runs still work — just paste one URL.
 - Submit any number of emails in a batch (one per line or comma-separated)
 - Optional delay between submissions to avoid rate-limits
 - Optional headless toggle (useful for debugging)

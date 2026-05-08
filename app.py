@@ -38,7 +38,7 @@ app = Flask(__name__)
 class Job:
     def __init__(
         self,
-        form_url: str,
+        form_urls: list[str],
         emails: list[str],
         delay: float,
         headless: bool,
@@ -51,7 +51,7 @@ class Job:
         use_signed_in_profile: bool = False,
     ):
         self.id = uuid.uuid4().hex
-        self.form_url = form_url
+        self.form_urls = form_urls
         self.emails = emails
         self.delay = delay
         self.headless = headless
@@ -78,14 +78,35 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
     """Worker that runs one email through submit_form and emits progress.
     Returns True on success."""
     total = len(job.emails)
-    job.emit("progress", index=idx, total=total, email=email, status="starting")
+    form_index = (idx - 1) % len(job.form_urls)
+    form_url = job.form_urls[form_index]
+    form_label = f"form {form_index + 1}"
 
-    def log(msg: str, _email=email, _idx=idx) -> None:
-        job.emit("log", index=_idx, total=total, email=_email, message=msg)
+    job.emit(
+        "progress",
+        index=idx,
+        total=total,
+        email=email,
+        form_index=form_index + 1,
+        form_total=len(job.form_urls),
+        status="starting",
+    )
+
+    def log(msg: str, _email=email, _idx=idx, _label=form_label) -> None:
+        job.emit(
+            "log",
+            index=_idx,
+            total=total,
+            email=_email,
+            form_label=_label,
+            message=msg,
+        )
+
+    log(f"Routed to {form_label}: {form_url}")
 
     try:
         result = submit_form(
-            form_url=job.form_url,
+            form_url=form_url,
             email=email,
             logger=log,
             headless=job.headless,
@@ -103,6 +124,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             index=idx,
             total=total,
             email=email,
+            form_index=form_index + 1,
             success=False,
             message=str(exc) or exc.__class__.__name__,
         )
@@ -113,6 +135,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
         index=idx,
         total=total,
         email=email,
+        form_index=form_index + 1,
         success=result.success,
         message=result.message,
     )
@@ -124,7 +147,8 @@ def _run_job(job: Job) -> None:
     job.emit(
         "start",
         total=total,
-        form_url=job.form_url,
+        form_urls=job.form_urls,
+        form_count=len(job.form_urls),
         concurrency=job.concurrency,
     )
 
@@ -280,15 +304,30 @@ def api_test_inbox():
 @app.post("/api/submit")
 def api_submit():
     data = request.get_json(force=True, silent=True) or {}
-    form_url = (data.get("form_url") or "").strip()
+    raw_form_urls = data.get("form_urls")
+    if not raw_form_urls:
+        # backwards-compat: single form_url field
+        single = (data.get("form_url") or "").strip()
+        raw_form_urls = single
+    if isinstance(raw_form_urls, list):
+        form_urls = [str(u).strip() for u in raw_form_urls if str(u).strip()]
+    else:
+        form_urls = [
+            u.strip()
+            for u in str(raw_form_urls).replace(",", "\n").splitlines()
+            if u.strip()
+        ]
     raw_emails = data.get("emails") or ""
     delay = float(data.get("delay") or 0)
     headless = bool(data.get("headless", False))
 
-    if not form_url:
-        return jsonify({"error": "form_url is required"}), 400
-    if "docs.google.com/forms" not in form_url:
-        return jsonify({"error": "form_url must be a Google Forms URL"}), 400
+    if not form_urls:
+        return jsonify({"error": "Provide at least one Google Form URL"}), 400
+    bad = [u for u in form_urls if "docs.google.com/forms" not in u]
+    if bad:
+        return jsonify({
+            "error": f"Not a Google Forms URL: {bad[0]}"
+        }), 400
 
     emails = [
         e.strip()
@@ -342,7 +381,7 @@ def api_submit():
     inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
 
     job = Job(
-        form_url=form_url,
+        form_urls=form_urls,
         emails=emails,
         delay=delay,
         headless=headless,
@@ -358,7 +397,11 @@ def api_submit():
         JOBS[job.id] = job
 
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
-    return jsonify({"job_id": job.id, "count": len(emails)})
+    return jsonify({
+        "job_id": job.id,
+        "count": len(emails),
+        "form_count": len(form_urls),
+    })
 
 
 @app.get("/api/stream/<job_id>")

@@ -29,10 +29,18 @@ function renderEmailRow(email) {
   li.dataset.email = email;
   li.innerHTML = `
     <span class="email">${email}</span>
+    <span class="row-meta muted small"></span>
     <span class="badge pending">queued</span>
   `;
   resultsEl.appendChild(li);
   return li;
+}
+
+function setRowMeta(email, text) {
+  const li = resultsEl.querySelector(`li[data-email="${CSS.escape(email)}"]`);
+  if (!li) return;
+  const meta = li.querySelector(".row-meta");
+  if (meta) meta.textContent = text;
 }
 
 function setBadge(email, cls, text) {
@@ -61,7 +69,11 @@ form.addEventListener("submit", async (e) => {
     evtSource = null;
   }
 
-  const form_url = document.getElementById("form_url").value.trim();
+  const rawFormUrls = document.getElementById("form_urls").value;
+  const form_urls = rawFormUrls
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   const rawEmails = document.getElementById("emails").value;
   const delay = parseFloat(document.getElementById("delay").value || "0");
   const headless = document.getElementById("headless").checked;
@@ -81,8 +93,8 @@ form.addEventListener("submit", async (e) => {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (!form_url || emails.length === 0) {
-    alert("Please provide a Form URL and at least one email.");
+  if (form_urls.length === 0 || emails.length === 0) {
+    alert("Please provide at least one Form URL and at least one email.");
     return;
   }
 
@@ -119,7 +131,7 @@ form.addEventListener("submit", async (e) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        form_url,
+        form_urls,
         emails: rawEmails,
         delay,
         headless,
@@ -166,15 +178,26 @@ form.addEventListener("submit", async (e) => {
 
     if (event === "start") {
       const c = payload.concurrency || 1;
+      const fc = payload.form_count || 1;
+      const formStr = fc > 1 ? `, ${fc} forms (round-robin)` : "";
       appendLog(
         `Started — ${payload.total} email(s)` +
-          (c > 1 ? `, ${c} parallel browser(s)` : "")
+          (c > 1 ? `, ${c} parallel browser(s)` : "") +
+          formStr
       );
     } else if (event === "progress") {
       setBadge(payload.email, "running", "running");
-      appendLog(`[${payload.index}/${payload.total}] ${payload.email}: starting`);
+      const fIdx = payload.form_index;
+      if (fIdx) setRowMeta(payload.email, `form ${fIdx}`);
+      const formTag = fIdx ? ` form ${fIdx}` : "";
+      appendLog(
+        `[${payload.index}/${payload.total}]${formTag} ${payload.email}: starting`
+      );
     } else if (event === "log") {
-      appendLog(`[${payload.index}/${payload.total}] ${payload.email}: ${payload.message}`);
+      const tag = payload.form_label ? ` ${payload.form_label}` : "";
+      appendLog(
+        `[${payload.index}/${payload.total}]${tag} ${payload.email}: ${payload.message}`
+      );
     } else if (event === "result") {
       done += 1;
       if (payload.success) {
@@ -187,8 +210,9 @@ form.addEventListener("submit", async (e) => {
       pillOk.textContent = `${ok} ok`;
       pillErr.textContent = `${err} failed`;
       progressFill.style.width = `${(done / total) * 100}%`;
+      const fTag = payload.form_index ? ` form ${payload.form_index}` : "";
       appendLog(
-        `[${payload.index}/${payload.total}] ${payload.email}: ${
+        `[${payload.index}/${payload.total}]${fTag} ${payload.email}: ${
           payload.success ? "SUCCESS" : "FAILED"
         } — ${payload.message}`
       );
