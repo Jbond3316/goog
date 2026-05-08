@@ -79,6 +79,36 @@
 
           <fieldset class="proxy-box">
             <legend>
+              <span style="margin-left: 6px">Google sign-in</span>
+            </legend>
+            <p class="muted small">
+              One-time sign-in: opens Chrome on the server pointed at
+              Google's sign-in page, you log in manually, the cookies
+              are saved. Every subsequent form submission clones that
+              signed-in profile so the form sees the user as logged
+              in. Sign-in is intentionally NOT proxied — your real IP
+              avoids "unusual sign-in activity" prompts.
+            </p>
+            <div id="signin-status" class="muted small" style="margin-bottom: 8px">
+              Loading sign-in status ...
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <button type="button" id="signin_start" class="ghost-btn">Sign in with Google</button>
+              <button type="button" id="signin_finish" class="ghost-btn" hidden>Mark sign-in complete</button>
+              <button type="button" id="signin_cancel" class="ghost-btn" hidden>Cancel</button>
+              <button type="button" id="signin_clear" class="ghost-btn" hidden>Sign out / clear</button>
+            </div>
+            <div class="checkbox" style="margin-top: 12px">
+              <input id="use_signed_in" type="checkbox" />
+              <label for="use_signed_in">
+                Use signed-in profile for submissions
+                <span class="muted small">(every parallel browser starts with the saved Google session)</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="proxy-box">
+            <legend>
               <input id="inbox_enabled" type="checkbox" />
               <label for="inbox_enabled">Verify delivery via IMAP</label>
             </legend>

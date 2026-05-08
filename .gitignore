@@ -5,3 +5,7 @@ __pycache__/
 venv/
 .env
 .DS_Store
+
+# Google sign-in master profile (saved Chrome user-data-dir)
+.google_profile/
+.google_profile.meta.json

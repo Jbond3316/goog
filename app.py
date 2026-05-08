@@ -29,6 +29,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from form_submitter import submit_form
 from proxy_support import ProxyConfig
 from inbox_verifier import InboxConfig, test_login as imap_test_login
+import google_signin
 
 
 app = Flask(__name__)
@@ -47,6 +48,7 @@ class Job:
         send_me_copy: bool = True,
         inbox: "InboxConfig | None" = None,
         inbox_timeout: float = 120.0,
+        use_signed_in_profile: bool = False,
     ):
         self.id = uuid.uuid4().hex
         self.form_url = form_url
@@ -59,6 +61,7 @@ class Job:
         self.send_me_copy = send_me_copy
         self.inbox = inbox
         self.inbox_timeout = inbox_timeout
+        self.use_signed_in_profile = use_signed_in_profile
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -91,6 +94,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             send_me_copy=job.send_me_copy,
             inbox=job.inbox,
             inbox_timeout=job.inbox_timeout,
+            use_signed_in_profile=job.use_signed_in_profile,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -201,6 +205,65 @@ def index() -> str:
     )
 
 
+@app.get("/api/signin/status")
+def api_signin_status():
+    return jsonify({
+        "active": google_signin.is_signin_active(),
+        "has_profile": google_signin.has_master_profile(),
+        "email": google_signin.saved_email(),
+    })
+
+
+@app.post("/api/signin/start")
+def api_signin_start():
+    data = request.get_json(force=True, silent=True) or {}
+    proxy_data = data.get("proxy") or {}
+    proxy_cfg: ProxyConfig | None = None
+    if proxy_data.get("enabled"):
+        host = (proxy_data.get("host") or "").strip()
+        port_raw = str(proxy_data.get("port") or "").strip()
+        if host and port_raw.isdigit():
+            proxy_cfg = ProxyConfig(
+                host=host,
+                port=int(port_raw),
+                username=(proxy_data.get("username") or "").strip(),
+                password=(proxy_data.get("password") or ""),
+                scheme=(proxy_data.get("scheme") or "http").strip() or "http",
+            )
+    try:
+        google_signin.start_signin(proxy=proxy_cfg)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({
+        "ok": True,
+        "message": (
+            "Chrome opened on the server. Sign in with your Google "
+            "account in that window, then click 'Mark sign-in complete'."
+        ),
+    })
+
+
+@app.post("/api/signin/finish")
+def api_signin_finish():
+    try:
+        email = google_signin.finish_signin()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "email": email or ""})
+
+
+@app.post("/api/signin/cancel")
+def api_signin_cancel():
+    google_signin.cancel_signin()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/signin/clear")
+def api_signin_clear():
+    google_signin.clear_master_profile()
+    return jsonify({"ok": True})
+
+
 @app.post("/api/test_inbox")
 def api_test_inbox():
     data = request.get_json(force=True, silent=True) or {}
@@ -267,6 +330,14 @@ def api_submit():
     concurrency = max(1, min(concurrency, 20))
 
     send_me_copy = bool(data.get("send_me_copy", True))
+    use_signed_in_profile = bool(data.get("use_signed_in_profile", False))
+    if use_signed_in_profile and not google_signin.has_master_profile():
+        return jsonify({
+            "error": (
+                "Use signed-in profile is on but no Google account is "
+                "signed in yet. Click 'Sign in with Google' first."
+            )
+        }), 400
 
     inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
 
@@ -281,6 +352,7 @@ def api_submit():
         send_me_copy=send_me_copy,
         inbox=inbox_cfg,
         inbox_timeout=inbox_timeout,
+        use_signed_in_profile=use_signed_in_profile,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

@@ -2,6 +2,12 @@ const form = document.getElementById("submit-form");
 const goBtn = document.getElementById("go");
 const imapTestBtn = document.getElementById("imap_test");
 const imapTestStatus = document.getElementById("imap_test_status");
+const signinStatusEl = document.getElementById("signin-status");
+const signinStartBtn = document.getElementById("signin_start");
+const signinFinishBtn = document.getElementById("signin_finish");
+const signinCancelBtn = document.getElementById("signin_cancel");
+const signinClearBtn = document.getElementById("signin_clear");
+const useSignedInBox = document.getElementById("use_signed_in");
 const statusCard = document.getElementById("status-card");
 const resultsEl = document.getElementById("results");
 const logEl = document.getElementById("log");
@@ -68,6 +74,7 @@ form.addEventListener("submit", async (e) => {
     10
   );
   const send_me_copy = document.getElementById("send_me_copy").checked;
+  const use_signed_in_profile = useSignedInBox && useSignedInBox.checked;
 
   const emails = rawEmails
     .split(/[\n,]+/)
@@ -121,6 +128,7 @@ form.addEventListener("submit", async (e) => {
         concurrency,
         send_me_copy,
         inbox,
+        use_signed_in_profile,
       }),
     });
   } catch (err) {
@@ -203,6 +211,114 @@ form.addEventListener("submit", async (e) => {
     }
   };
 });
+
+// ----- Google sign-in lifecycle -----
+async function refreshSigninStatus() {
+  if (!signinStatusEl) return;
+  let s;
+  try {
+    const r = await fetch("/api/signin/status");
+    s = await r.json();
+  } catch (e) {
+    signinStatusEl.textContent = "Status check failed: " + e;
+    return;
+  }
+  const showHide = (el, on) => el && (el.hidden = !on);
+  if (s.active) {
+    signinStatusEl.innerHTML =
+      'Browser open on the server &mdash; sign in there, then click ' +
+      '<strong>Mark sign-in complete</strong>.';
+    showHide(signinStartBtn, false);
+    showHide(signinFinishBtn, true);
+    showHide(signinCancelBtn, true);
+    showHide(signinClearBtn, false);
+    if (useSignedInBox) useSignedInBox.disabled = true;
+  } else if (s.has_profile) {
+    const who = s.email ? s.email : "(account)";
+    signinStatusEl.innerHTML = `Signed in as <strong>${who}</strong>. Submissions can use this profile.`;
+    showHide(signinStartBtn, false);
+    showHide(signinFinishBtn, false);
+    showHide(signinCancelBtn, false);
+    showHide(signinClearBtn, true);
+    if (useSignedInBox) {
+      useSignedInBox.disabled = false;
+      if (!useSignedInBox.dataset.userTouched) useSignedInBox.checked = true;
+    }
+  } else {
+    signinStatusEl.textContent =
+      "Not signed in. Click 'Sign in with Google' to open a Chrome window on the server.";
+    showHide(signinStartBtn, true);
+    showHide(signinFinishBtn, false);
+    showHide(signinCancelBtn, false);
+    showHide(signinClearBtn, false);
+    if (useSignedInBox) {
+      useSignedInBox.disabled = true;
+      useSignedInBox.checked = false;
+    }
+  }
+}
+
+if (useSignedInBox) {
+  useSignedInBox.addEventListener("change", () => {
+    useSignedInBox.dataset.userTouched = "1";
+  });
+}
+
+if (signinStartBtn) {
+  signinStartBtn.addEventListener("click", async () => {
+    signinStartBtn.disabled = true;
+    signinStatusEl.textContent = "Opening Chrome on the server ...";
+    try {
+      const r = await fetch("/api/signin/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!j.ok) signinStatusEl.textContent = "Error: " + (j.error || "");
+    } catch (e) {
+      signinStatusEl.textContent = "Network error: " + e;
+    } finally {
+      signinStartBtn.disabled = false;
+      refreshSigninStatus();
+    }
+  });
+}
+
+if (signinFinishBtn) {
+  signinFinishBtn.addEventListener("click", async () => {
+    signinFinishBtn.disabled = true;
+    signinStatusEl.textContent = "Closing browser and saving profile ...";
+    try {
+      const r = await fetch("/api/signin/finish", { method: "POST" });
+      const j = await r.json();
+      if (!j.ok) signinStatusEl.textContent = "Error: " + (j.error || "");
+    } catch (e) {
+      signinStatusEl.textContent = "Network error: " + e;
+    } finally {
+      signinFinishBtn.disabled = false;
+      refreshSigninStatus();
+    }
+  });
+}
+
+if (signinCancelBtn) {
+  signinCancelBtn.addEventListener("click", async () => {
+    await fetch("/api/signin/cancel", { method: "POST" });
+    refreshSigninStatus();
+  });
+}
+
+if (signinClearBtn) {
+  signinClearBtn.addEventListener("click", async () => {
+    if (!confirm("Wipe the saved Google profile?")) return;
+    await fetch("/api/signin/clear", { method: "POST" });
+    refreshSigninStatus();
+  });
+}
+
+refreshSigninStatus();
+setInterval(refreshSigninStatus, 8000);
 
 if (imapTestBtn) {
   imapTestBtn.addEventListener("click", async () => {

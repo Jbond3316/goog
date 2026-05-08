@@ -36,6 +36,7 @@ from recaptcha_solver import (
 from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 from fingerprint import Fingerprint, build_stealth_js, random_fingerprint
 from inbox_verifier import InboxConfig, wait_for_receipt
+import google_signin
 
 
 Logger = Callable[[str], None]
@@ -62,6 +63,7 @@ def _build_driver(
     headless: bool = True,
     proxy: Optional[ProxyConfig] = None,
     fingerprint: Optional[Fingerprint] = None,
+    use_signed_in_profile: bool = False,
 ) -> tuple[webdriver.Chrome, Optional[str], str, Fingerprint]:
     """Return (driver, proxy_extension_dir, user_data_dir, fingerprint).
 
@@ -99,6 +101,13 @@ def _build_driver(
     opts.add_experimental_option("useAutomationExtension", False)
 
     user_data_dir = tempfile.mkdtemp(prefix="chrome_udd_")
+    if use_signed_in_profile and google_signin.has_master_profile():
+        try:
+            google_signin.clone_into(user_data_dir)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to clone signed-in profile: {exc}"
+            ) from exc
     opts.add_argument(f"--user-data-dir={user_data_dir}")
 
     ext_dir: Optional[str] = None
@@ -369,12 +378,17 @@ def _attempt_submit(
     inbox: Optional[InboxConfig] = None,
     inbox_timeout: float = 120.0,
     submit_started_at: Optional[datetime] = None,
+    use_signed_in_profile: bool = False,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
     driver, ext_dir, user_data_dir, fp = _build_driver(
-        headless=headless, proxy=proxy
+        headless=headless,
+        proxy=proxy,
+        use_signed_in_profile=use_signed_in_profile,
     )
+    if use_signed_in_profile:
+        log("Using cloned signed-in Google profile.")
     ua_short = fp.user_agent.split(") ", 1)[0] + ")"
     log(
         f"Fingerprint: {ua_short} | {fp.platform} | {fp.timezone} | "
@@ -502,6 +516,7 @@ def submit_form(
     send_me_copy: bool = True,
     inbox: Optional[InboxConfig] = None,
     inbox_timeout: float = 120.0,
+    use_signed_in_profile: bool = False,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -533,6 +548,7 @@ def submit_form(
                 inbox=inbox,
                 inbox_timeout=inbox_timeout,
                 submit_started_at=attempt_start,
+                use_signed_in_profile=use_signed_in_profile,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

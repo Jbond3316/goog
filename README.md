@@ -23,6 +23,12 @@ solved using the audio challenge, ported from
   via a generated `webRequest.onAuthRequired` extension (works out of
   the box with providers like DataImpulse, Bright Data, etc.). Both
   the form browser and the captcha-audio download go through the proxy.
+- **One-time Google sign-in** — open Chrome on the server pointed at
+  Google's sign-in page, log in manually once, and every subsequent
+  parallel browser clones that signed-in profile. Useful when the
+  form requires the respondent to be logged in. Sign-in is not
+  proxied (so your real IP avoids "unusual sign-in activity"
+  prompts), but submissions are.
 - **IMAP delivery verification** — after Google accepts each form, log
   in to a Gmail / IMAP inbox via SSL and wait for the receipt email
   from `forms-receipts-noreply@google.com`. If the receipt never
