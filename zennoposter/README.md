@@ -55,6 +55,23 @@ To loop over a list of emails:
 Each thread runs a fresh Chromium profile (ZennoPoster's "Save profile"
 should be off), so cookies / fingerprints don't carry over.
 
+## Important: do NOT add `using` directives
+
+ZennoPoster's "Custom code (C#)" action wraps your code as the body of
+a method. If you add `using System;` etc. at the top, the compiler
+treats them as using-statements (resource blocks) and fails with:
+
+```
+CS1003: Syntax error, '(' expected
+CS1026: ) expected
+```
+
+The required namespaces (`System`, `System.IO`, `System.Net`,
+`System.Text`, `System.Text.RegularExpressions`, `System.Threading`,
+`ZennoLab.CommandCenter`, `ZennoLab.InterfacesLibrary.ProjectModel`)
+are imported by ZennoPoster automatically. The `SubmitForm.cs` body
+uses fully-qualified names where needed.
+
 ## Troubleshooting
 
 | Symptom                                            | Fix                                                                                                                  |
