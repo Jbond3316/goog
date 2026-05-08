@@ -428,7 +428,6 @@ def _attempt_submit(
                 )
     finally:
         try:
-            time.sleep(0.5)
             driver.quit()
         except Exception:
             pass
