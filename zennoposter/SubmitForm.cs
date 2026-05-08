@@ -59,13 +59,13 @@ if (emailInput.IsVoid) throw new Exception("Email input not found");
 
 emailInput.Click();
 System.Threading.Thread.Sleep(300);
-emailInput.SetValue("");
+emailInput.SetValue("", "Full", false, false);
 
 for (int i = 0; i < email.Length; i++)
 {
     string current = emailInput.GetAttribute("value");
     if (current == null) current = "";
-    emailInput.SetValue(current + email[i]);
+    emailInput.SetValue(current + email[i], "Full", false, false);
     System.Threading.Thread.Sleep(rng.Next(60, 170));
 }
 project.SendInfoToLog("Filled email: " + email, true);
@@ -105,11 +105,15 @@ else
     project.SendInfoToLog("Switched to audio challenge.", true);
     System.Threading.Thread.Sleep(1500);
 
-    string pageHtml = tab.GetMainSourceCode();
-    if (pageHtml != null && pageHtml.Contains("Try again later"))
+    // ----------------------- step 6: get audio URL ----------------
+    // If Google blocked the session ("Try again later"), the
+    // audio-source element won't be present and we'll throw below
+    // with a clear message — no need to scrape page HTML for it.
+    HtmlElement tryAgainEl = tab.FindElementByAttribute(
+        "div", "class", "rc-doscaptcha-header-text", "regexp", 0);
+    if (!tryAgainEl.IsVoid)
         throw new Exception("Google flagged this session ('Try again later'). Slow down or change network.");
 
-    // ----------------------- step 6: get audio URL ----------------
     HtmlElement audioSrc = tab.FindElementByAttribute("audio", "id", "audio-source", "regexp", 0);
     if (audioSrc.IsVoid)
         audioSrc = tab.FindElementByAttribute("source", "id", "audio-source", "regexp", 0);
@@ -171,7 +175,7 @@ else
 
     responseInput.Click();
     System.Threading.Thread.Sleep(200);
-    responseInput.SetValue(transcript);
+    responseInput.SetValue(transcript, "Full", false, false);
     System.Threading.Thread.Sleep(rng.Next(400, 800));
 
     HtmlElement verifyBtn = tab.FindElementByAttribute("button", "id", "recaptcha-verify-button", "regexp", 0);
