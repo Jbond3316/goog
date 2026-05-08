@@ -122,25 +122,11 @@ class RecaptchaSolver:
                 iframes = self.driver.find_elements(By.XPATH, CHALLENGE_IFRAME_XPATH)
                 visible = [f for f in iframes if self._iframe_visible(f)]
                 if visible:
-                    self.log(
-                        "reCAPTCHA challenge iframe detected — "
-                        "waiting 5s for it to settle before clicking audio ..."
-                    )
-                    time.sleep(5)
-                    self.driver.switch_to.default_content()
-                    iframes = self.driver.find_elements(
-                        By.XPATH, CHALLENGE_IFRAME_XPATH
-                    )
-                    visible = [f for f in iframes if self._iframe_visible(f)]
-                    if not visible:
-                        self.log(
-                            "Challenge iframe disappeared during wait; retrying detection."
-                        )
-                        continue
+                    self.log("reCAPTCHA challenge iframe detected.")
                     return self._solve_audio(visible[0])
             except WebDriverException:
                 pass
-            time.sleep(0.3)
+            time.sleep(0.1)
         return False
 
     def _solve_audio(self, challenge_iframe) -> bool:
@@ -153,7 +139,6 @@ class RecaptchaSolver:
                 )
                 audio_btn.click()
                 self.log("Switched to audio challenge.")
-                time.sleep(0.5)
             except TimeoutException:
                 pass
 
@@ -179,13 +164,6 @@ class RecaptchaSolver:
             response_input.clear()
             response_input.send_keys(text)
             response_input.send_keys(Keys.ENTER)
-
-            time.sleep(2.0)
-
-            if self._is_detected():
-                raise RecaptchaBlockedError(
-                    "Google rejected the audio response ('Try again later')."
-                )
 
             self.log("Audio reCAPTCHA submitted.")
             return True
