@@ -34,13 +34,44 @@
 //
 // >>> PASTE FROM HERE <<<
 
+// ----------------- inline fallbacks -------------------------------
+// If you don't want to set Default values in Project Maker (or mark
+// the variables as "Input"), just paste your real values into the
+// three constants below. They are used ONLY when the matching
+// project variable is empty, so the same script works either way.
+//
+// Why this matters: ZennoPoster runtime starts every task from each
+// variable's "Default value" (saved in the .zp file). What you type
+// into the live "Value" column in Project Maker is NOT saved — so
+// the script sees an empty string when ZennoPoster runs it.
+const string DEFAULT_FORM_URL  = "";
+const string DEFAULT_EMAIL     = "";
+const string DEFAULT_WIT_TOKEN = "";
+// ------------------------------------------------------------------
+
 string formUrl  = project.Variables["FORM_URL"].Value;
 string email    = project.Variables["EMAIL"].Value;
 string witToken = project.Variables["WIT_TOKEN"].Value;
 
-if (string.IsNullOrWhiteSpace(formUrl))  throw new Exception("FORM_URL is empty");
-if (string.IsNullOrWhiteSpace(email))    throw new Exception("EMAIL is empty");
-if (string.IsNullOrWhiteSpace(witToken)) throw new Exception("WIT_TOKEN is empty (get one at https://wit.ai)");
+if (string.IsNullOrWhiteSpace(formUrl))  formUrl  = DEFAULT_FORM_URL;
+if (string.IsNullOrWhiteSpace(email))    email    = DEFAULT_EMAIL;
+if (string.IsNullOrWhiteSpace(witToken)) witToken = DEFAULT_WIT_TOKEN;
+
+if (string.IsNullOrWhiteSpace(formUrl))
+    throw new Exception(
+        "FORM_URL is empty. Set its 'Default value' in Project Maker's " +
+        "Variables tab (NOT the live 'Value' column — that doesn't save), " +
+        "OR paste it into DEFAULT_FORM_URL at the top of this code block.");
+if (string.IsNullOrWhiteSpace(email))
+    throw new Exception(
+        "EMAIL is empty. Either set its 'Default value' in the Variables " +
+        "tab, set it to be filled by a 'Get line from file' action before " +
+        "this block, or paste a test address into DEFAULT_EMAIL.");
+if (string.IsNullOrWhiteSpace(witToken))
+    throw new Exception(
+        "WIT_TOKEN is empty. Get a free Server Access Token at " +
+        "https://wit.ai and set it as the 'Default value' of WIT_TOKEN " +
+        "in the Variables tab, or paste it into DEFAULT_WIT_TOKEN.");
 
 var tab = instance.ActiveTab;
 var rng = new Random();

@@ -55,6 +55,57 @@ To loop over a list of emails:
 Each thread runs a fresh Chromium profile (ZennoPoster's "Save profile"
 should be off), so cookies / fingerprints don't carry over.
 
+## Important: variables disappear when run in ZennoPoster
+
+**Symptom:** the project runs fine in Project Maker but ZennoPoster
+shows `FORM_URL is empty` (or any other variable empty).
+
+**Reason:** every variable in ZennoPoster has two columns — **Value**
+(live runtime) and **Default value** (saved in the .zp file).
+Project Maker shows both. ZennoPoster runtime only starts from the
+**Default value**. Whatever you type into the live "Value" column
+during development is *not* persisted to the .zp file.
+
+**Fix — pick one:**
+
+### A. Set Default value (best for fixed configuration)
+
+1. Project Maker → **Variables** tab.
+2. Click in the **Default value** column for each variable
+   (`FORM_URL`, `WIT_TOKEN`).
+3. Type the value there. **File → Save**.
+
+For `EMAIL`, leave the default empty and feed it from a file:
+
+1. Drop a **File processing → Get line from file** action *before*
+   the C# block.
+2. File: `emails.txt`, Mode: *Take and delete*, Result variable:
+   `EMAIL`.
+3. ZennoPoster threads = N → each thread takes one line and
+   submits in parallel.
+
+### B. Mark them as "Input" variables (per-task overrides)
+
+1. Project Maker → Variables tab → right-click each variable →
+   **Edit** → tick **"Display in input"** → OK → Save.
+2. In ZennoPoster, when you add a task for this project, the
+   right-hand panel exposes those three fields per task.
+
+### C. Hardcode in the C# block (quickest)
+
+The script has three `DEFAULT_*` constants at the top:
+
+```csharp
+const string DEFAULT_FORM_URL  = "";
+const string DEFAULT_EMAIL     = "";
+const string DEFAULT_WIT_TOKEN = "";
+```
+
+Paste your real values into them. They are used as fallbacks only
+when the matching project variable is empty, so the same code works
+in both Project Maker (with variables set) and ZennoPoster runtime
+(picking up the constants).
+
 ## Important: do NOT add `using` directives
 
 ZennoPoster's "Custom code (C#)" action wraps your code as the body of
