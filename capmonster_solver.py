@@ -199,7 +199,6 @@ var ta = document.getElementById('g-recaptcha-response');
 if (ta) {
   ta.style.display = 'block';
   ta.value = token;
-  ta.innerHTML = token;
 } else {
   ta = document.createElement('textarea');
   ta.id = 'g-recaptcha-response';
@@ -208,6 +207,16 @@ if (ta) {
   ta.value = token;
   document.body.appendChild(ta);
 }
+
+// Some forms render multiple g-recaptcha-response textareas
+// (one per widget); set them all.
+try {
+  var all = document.getElementsByName('g-recaptcha-response');
+  for (var i = 0; i < all.length; i++) {
+    all[i].value = token;
+    try { all[i].style.display = 'block'; } catch (e) {}
+  }
+} catch (e) {}
 
 // Walk grecaptcha's internal client objects and fire any registered
 // callback. This is what Google Forms' invisible reCAPTCHA waits for.
