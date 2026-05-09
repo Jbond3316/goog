@@ -31,12 +31,7 @@ from recaptcha_solver import (
     RecaptchaBlockedError,
     RecaptchaSolver,
 )
-from proxy_support import (
-    ProxyConfig,
-    RemoteBrowserConfig,
-    build_proxy_auth_extension,
-    cleanup_extension,
-)
+from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 from fingerprint import Fingerprint, build_stealth_js, random_fingerprint
 from inbox_verifier import InboxConfig, wait_for_receipt
 import google_signin
@@ -62,59 +57,12 @@ SUBMIT_XPATHS = [
 ]
 
 
-def _build_remote_driver(
-    remote: RemoteBrowserConfig,
-    fingerprint: Fingerprint,
-) -> webdriver.Remote:
-    """Connect to a remote Selenium endpoint (Bright Data Scraping
-    Browser, Selenium Grid, etc.). All local-only flags are skipped."""
-    from selenium.webdriver.chromium.remote_connection import (
-        ChromiumRemoteConnection,
-    )
-    from selenium.webdriver.remote.webdriver import (
-        WebDriver as RemoteWebDriver,
-    )
-
-    opts = ChromeOptions()
-    opts.set_capability("acceptInsecureCerts", True)
-    opts.add_argument("--lang=en-US")
-    opts.add_argument(f"--user-agent={fingerprint.user_agent}")
-
-    conn = ChromiumRemoteConnection(remote.url, "goog", "chrome")
-
-    auth_header = _basic_auth_header_from_url(remote.url)
-    if auth_header:
-        try:
-            conn._extra_headers = {"Authorization": auth_header}
-        except Exception:
-            pass
-
-    return RemoteWebDriver(conn, options=opts)
-
-
-def _basic_auth_header_from_url(url: str) -> Optional[str]:
-    """If ``url`` contains user:pass@ credentials, return a 'Basic …'
-    Authorization header value. Otherwise None."""
-    import base64
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return None
-    if not parsed.username:
-        return None
-    creds = f"{parsed.username}:{parsed.password or ''}".encode("utf-8")
-    return "Basic " + base64.b64encode(creds).decode("ascii")
-
-
 def _build_driver(
     headless: bool = True,
     proxy: Optional[ProxyConfig] = None,
     fingerprint: Optional[Fingerprint] = None,
     use_signed_in_profile: bool = False,
-    remote: Optional[RemoteBrowserConfig] = None,
-) -> tuple[webdriver.Chrome, Optional[str], Optional[str], Fingerprint]:
+) -> tuple[webdriver.Chrome, Optional[str], str, Fingerprint]:
     """Return (driver, proxy_extension_dir, user_data_dir, fingerprint).
 
     A fresh random fingerprint is generated for each browser unless
@@ -128,17 +76,8 @@ def _build_driver(
     user-data-dir per browser is required when running many Chromes
     in parallel — otherwise Chrome's Singleton lock makes the second
     launch hang or fail.
-
-    If ``remote`` is set, we connect to a remote Selenium endpoint
-    instead of launching a local Chrome and skip every local-only
-    flag (proxy extension, user-data-dir, signed-in profile clone,
-    headless flag — Bright Data manages all of that).
     """
     fp = fingerprint or random_fingerprint()
-
-    if remote is not None and remote.is_configured:
-        driver = _build_remote_driver(remote, fp)
-        return driver, None, None, fp
 
     opts = ChromeOptions()
     if headless:
@@ -399,28 +338,15 @@ def _attempt_submit(
     inbox_timeout: float = 120.0,
     submit_started_at: Optional[datetime] = None,
     use_signed_in_profile: bool = False,
-    remote: Optional[RemoteBrowserConfig] = None,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
-    using_remote = remote is not None and remote.is_configured
-
-    if using_remote and use_signed_in_profile:
-        log(
-            "Note: 'Use signed-in profile' is ignored in remote-browser "
-            "mode (no shared filesystem with the remote browser)."
-        )
-        use_signed_in_profile = False
-
     driver, ext_dir, user_data_dir, fp = _build_driver(
         headless=headless,
-        proxy=None if using_remote else proxy,
+        proxy=proxy,
         use_signed_in_profile=use_signed_in_profile,
-        remote=remote,
     )
-    if using_remote:
-        log("Using remote browser endpoint (proxy + headless flags ignored).")
-    elif use_signed_in_profile:
+    if use_signed_in_profile:
         log("Using cloned signed-in Google profile.")
     ua_short = fp.user_agent.split(") ", 1)[0] + ")"
     log(
@@ -428,7 +354,7 @@ def _attempt_submit(
         f"{fp.screen_width}x{fp.screen_height} | GPU={fp.webgl_renderer[:40]}"
     )
     try:
-        if not using_remote and proxy is not None:
+        if proxy is not None:
             log("Verifying proxy connectivity ...")
             _verify_proxy(driver, proxy, log)
 
@@ -532,7 +458,6 @@ def submit_form(
     inbox: Optional[InboxConfig] = None,
     inbox_timeout: float = 120.0,
     use_signed_in_profile: bool = False,
-    remote: Optional[RemoteBrowserConfig] = None,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -565,7 +490,6 @@ def submit_form(
                 inbox_timeout=inbox_timeout,
                 submit_started_at=attempt_start,
                 use_signed_in_profile=use_signed_in_profile,
-                remote=remote,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

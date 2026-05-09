@@ -20,28 +20,6 @@ from typing import Dict, Optional
 
 
 @dataclass
-class RemoteBrowserConfig:
-    """Connection to a remote Selenium-compatible browser endpoint
-    (e.g. Bright Data Scraping Browser, a Selenium Grid hub, etc.).
-
-    The ``url`` is a full Selenium command-executor URL, optionally with
-    embedded basic-auth credentials, e.g.::
-
-        https://brd-customer-XXX:PASS@brd.superproxy.io:9515
-
-    When this is set, no local Chrome is launched; we connect to the
-    remote endpoint instead and skip every local-only flag (proxy
-    extension, user-data-dir, signed-in profile clone, etc.).
-    """
-
-    url: str
-
-    @property
-    def is_configured(self) -> bool:
-        return bool(self.url and self.url.strip())
-
-
-@dataclass
 class ProxyConfig:
     host: str
     port: int
