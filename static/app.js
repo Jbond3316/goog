@@ -94,6 +94,34 @@ form.addEventListener("submit", async (e) => {
   const capmonster_api_key =
     document.getElementById("capmonster_api_key").value || "";
 
+  const human = {
+    enabled: document.getElementById("human_enabled").checked,
+    keyboard_delay_min: parseInt(
+      document.getElementById("keyboard_delay_min").value || "100",
+      10
+    ),
+    keyboard_delay_max: parseInt(
+      document.getElementById("keyboard_delay_max").value || "150",
+      10
+    ),
+    mouse_speed_min: parseInt(
+      document.getElementById("mouse_speed_min").value || "15",
+      10
+    ),
+    mouse_speed_max: parseInt(
+      document.getElementById("mouse_speed_max").value || "20",
+      10
+    ),
+    screen_width: parseInt(
+      document.getElementById("screen_width").value || "1920",
+      10
+    ),
+    screen_height: parseInt(
+      document.getElementById("screen_height").value || "1080",
+      10
+    ),
+  };
+
   const emails = rawEmails
     .split(/[\n,]+/)
     .map((s) => s.trim())
@@ -149,6 +177,7 @@ form.addEventListener("submit", async (e) => {
         use_signed_in_profile,
         captcha_method,
         capmonster_api_key,
+        human,
       }),
     });
   } catch (err) {

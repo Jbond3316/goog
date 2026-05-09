@@ -9,6 +9,7 @@ fires from Submit click (common on Google Forms today).
 
 from __future__ import annotations
 
+import random
 import tempfile
 import time
 from dataclasses import dataclass
@@ -38,6 +39,12 @@ from capmonster_solver import (
     CapMonsterError,
     CapMonsterSolver,
     find_recaptcha_sitekey,
+)
+from human_behavior import (
+    HumanBehavior,
+    human_move_and_click,
+    human_type,
+    human_warmup,
 )
 import google_signin
 
@@ -177,12 +184,20 @@ def _find_submit_button(driver) -> Optional[object]:
     return None
 
 
-def _click_submit(driver, log: Logger) -> bool:
+def _click_submit(
+    driver,
+    log: Logger,
+    human: Optional[HumanBehavior] = None,
+) -> bool:
     try:
         btn = WebDriverWait(driver, 10).until(lambda d: _find_submit_button(d))
     except TimeoutException:
         log("Could not find the form's Submit button.")
         return False
+    if human is not None and human.enabled:
+        human_move_and_click(driver, btn, human)
+        log("Clicked Submit (human-paced).")
+        return True
     try:
         driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center'});", btn
@@ -345,13 +360,26 @@ def _attempt_submit(
     use_signed_in_profile: bool = False,
     captcha_method: str = "audio",
     capmonster_api_key: Optional[str] = None,
+    human: Optional[HumanBehavior] = None,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
+    rng = random.Random()
+    human = human or HumanBehavior(enabled=False)
+
+    fp_override: Optional[Fingerprint] = None
+    if human.enabled:
+        fp_override = random_fingerprint()
+        fp_override.screen_width = human.screen_width
+        fp_override.screen_height = human.screen_height
+        fp_override.window_width = human.window_width
+        fp_override.window_height = human.window_height
+
     driver, ext_dir, user_data_dir, fp = _build_driver(
         headless=headless,
         proxy=proxy,
         use_signed_in_profile=use_signed_in_profile,
+        fingerprint=fp_override,
     )
     if use_signed_in_profile:
         log("Using cloned signed-in Google profile.")
@@ -360,12 +388,23 @@ def _attempt_submit(
         f"Fingerprint: {ua_short} | {fp.platform} | {fp.timezone} | "
         f"{fp.screen_width}x{fp.screen_height} | GPU={fp.webgl_renderer[:40]}"
     )
+    if human.enabled:
+        log(
+            f"Human mode ON: keyboard {human.keyboard_delay_min}-"
+            f"{human.keyboard_delay_max}ms/char, mouse "
+            f"{human.mouse_speed_min}-{human.mouse_speed_max}px/step, "
+            f"screen {human.screen_width}x{human.screen_height}"
+        )
     try:
         if proxy is not None:
             log("Verifying proxy connectivity ...")
             _verify_proxy(driver, proxy, log)
 
         driver.get(form_url)
+
+        if human.enabled:
+            time.sleep(rng.uniform(1.2, 2.4))
+            human_warmup(driver, human, rng)
 
         email_input = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located(
@@ -374,8 +413,14 @@ def _attempt_submit(
         )
         email_input.click()
         email_input.clear()
-        email_input.send_keys(email)
-        log(f"Pasted email: {email}")
+        if human.enabled:
+            human_type(email_input, email, human, rng)
+            log(f"Typed email (human-paced): {email}")
+            time.sleep(rng.uniform(0.5, 1.2))
+            human_warmup(driver, human, rng)
+        else:
+            email_input.send_keys(email)
+            log(f"Pasted email: {email}")
 
         if send_me_copy:
             if not _tick_send_me_copy(driver, log):
@@ -405,7 +450,7 @@ def _attempt_submit(
                     "submitting without pre-solve."
                 )
 
-            if not _click_submit(driver, log):
+            if not _click_submit(driver, log, human):
                 raise RuntimeError("Submit button not found on form.")
 
             auto_submitted = False
@@ -417,7 +462,7 @@ def _attempt_submit(
                 time.sleep(0.2)
             if not auto_submitted:
                 log("Form did not auto-submit; clicking Submit once more.")
-                _click_submit(driver, log)
+                _click_submit(driver, log, human)
         else:
             solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
 
@@ -426,7 +471,7 @@ def _attempt_submit(
                 solver.click_anchor_if_visible(timeout=5)
                 solver.solve_challenge_if_present(timeout=8)
 
-            if not _click_submit(driver, log):
+            if not _click_submit(driver, log, human):
                 raise RuntimeError("Submit button not found on form.")
 
             log("Waiting for reCAPTCHA challenge (if any) after submit ...")
@@ -445,7 +490,7 @@ def _attempt_submit(
 
                 if not auto_submitted:
                     log("Form did not auto-submit; clicking Submit once more.")
-                    _click_submit(driver, log)
+                    _click_submit(driver, log, human)
 
         try:
             WebDriverWait(driver, 30).until(lambda d: _confirmation_reached(d))
@@ -505,6 +550,7 @@ def submit_form(
     use_signed_in_profile: bool = False,
     captcha_method: str = "audio",
     capmonster_api_key: Optional[str] = None,
+    human: Optional[HumanBehavior] = None,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -539,6 +585,7 @@ def submit_form(
                 use_signed_in_profile=use_signed_in_profile,
                 captcha_method=captcha_method,
                 capmonster_api_key=capmonster_api_key,
+                human=human,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

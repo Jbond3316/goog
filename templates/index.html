@@ -114,6 +114,46 @@
 
           <fieldset class="proxy-box">
             <legend>
+              <input id="human_enabled" type="checkbox" />
+              <label for="human_enabled">Human-like behavior</label>
+            </legend>
+            <p class="muted small">
+              Adds smooth mouse movement and per-character typing
+              delays. Boosts reCAPTCHA v3's behavioural score; adds
+              a few seconds per email.
+            </p>
+            <div class="proxy-grid">
+              <div>
+                <label for="keyboard_delay_min">Keyboard delay min (ms)</label>
+                <input id="keyboard_delay_min" type="number" min="0" max="2000" step="10" value="100" />
+              </div>
+              <div>
+                <label for="keyboard_delay_max">Keyboard delay max (ms)</label>
+                <input id="keyboard_delay_max" type="number" min="0" max="2000" step="10" value="150" />
+              </div>
+              <div>
+                <label for="mouse_speed_min">Mouse speed min (px/step)</label>
+                <input id="mouse_speed_min" type="number" min="1" max="200" step="1" value="15" />
+              </div>
+              <div>
+                <label for="mouse_speed_max">Mouse speed max (px/step)</label>
+                <input id="mouse_speed_max" type="number" min="1" max="400" step="1" value="20" />
+              </div>
+            </div>
+            <div class="proxy-grid" style="margin-top: 10px">
+              <div>
+                <label for="screen_width">Screen width</label>
+                <input id="screen_width" type="number" min="640" max="3840" step="1" value="1920" />
+              </div>
+              <div>
+                <label for="screen_height">Screen height</label>
+                <input id="screen_height" type="number" min="480" max="2160" step="1" value="1080" />
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="proxy-box">
+            <legend>
               <span style="margin-left: 6px">Captcha solver</span>
             </legend>
             <p class="muted small">Choose how each form's reCAPTCHA gets solved.</p>

@@ -30,6 +30,7 @@ from form_submitter import submit_form
 from proxy_support import ProxyConfig
 from inbox_verifier import InboxConfig, test_login as imap_test_login
 from capmonster_solver import CapMonsterError, CapMonsterSolver
+from human_behavior import HumanBehavior
 import google_signin
 
 
@@ -52,6 +53,7 @@ class Job:
         use_signed_in_profile: bool = False,
         captcha_method: str = "audio",
         capmonster_api_key: str = "",
+        human: "HumanBehavior | None" = None,
     ):
         self.id = uuid.uuid4().hex
         self.form_urls = form_urls
@@ -67,6 +69,7 @@ class Job:
         self.use_signed_in_profile = use_signed_in_profile
         self.captcha_method = captcha_method
         self.capmonster_api_key = capmonster_api_key
+        self.human = human
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -123,6 +126,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             use_signed_in_profile=job.use_signed_in_profile,
             captcha_method=job.captcha_method,
             capmonster_api_key=job.capmonster_api_key,
+            human=job.human,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -208,6 +212,25 @@ def _run_job(job: Job) -> None:
         "done", total=total, success=success_count, failure=failure_count
     )
     job.done = True
+
+
+def _parse_human(d: dict) -> "HumanBehavior | None":
+    if not d or not d.get("enabled"):
+        return None
+    def _i(key: str, default: int) -> int:
+        try:
+            return int(d.get(key) or default)
+        except (TypeError, ValueError):
+            return default
+    return HumanBehavior(
+        enabled=True,
+        mouse_speed_min=_i("mouse_speed_min", 15),
+        mouse_speed_max=_i("mouse_speed_max", 20),
+        keyboard_delay_min=_i("keyboard_delay_min", 100),
+        keyboard_delay_max=_i("keyboard_delay_max", 150),
+        screen_width=_i("screen_width", 1920),
+        screen_height=_i("screen_height", 1080),
+    )
 
 
 def _parse_inbox(d: dict) -> tuple["InboxConfig | None", float]:
@@ -432,6 +455,8 @@ def api_submit():
 
     inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
 
+    human_cfg = _parse_human(data.get("human") or {})
+
     job = Job(
         form_urls=form_urls,
         emails=emails,
@@ -446,6 +471,7 @@ def api_submit():
         use_signed_in_profile=use_signed_in_profile,
         captcha_method=captcha_method,
         capmonster_api_key=capmonster_api_key,
+        human=human_cfg,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job
