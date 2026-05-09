@@ -361,6 +361,8 @@ def _attempt_submit(
     captcha_method: str = "audio",
     capmonster_api_key: Optional[str] = None,
     human: Optional[HumanBehavior] = None,
+    speech_engine: str = "google",
+    wit_token: Optional[str] = None,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
@@ -464,7 +466,13 @@ def _attempt_submit(
                 log("Form did not auto-submit; clicking Submit once more.")
                 _click_submit(driver, log, human)
         else:
-            solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
+            solver = RecaptchaSolver(
+                driver,
+                logger=log,
+                proxy=proxy,
+                speech_engine=speech_engine,
+                wit_token=wit_token,
+            )
 
             if _has_anchor_iframe(driver):
                 log("Checkbox reCAPTCHA detected — clicking anchor first.")
@@ -551,6 +559,8 @@ def submit_form(
     captcha_method: str = "audio",
     capmonster_api_key: Optional[str] = None,
     human: Optional[HumanBehavior] = None,
+    speech_engine: str = "google",
+    wit_token: Optional[str] = None,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -586,6 +596,8 @@ def submit_form(
                 captcha_method=captcha_method,
                 capmonster_api_key=capmonster_api_key,
                 human=human,
+                speech_engine=speech_engine,
+                wit_token=wit_token,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

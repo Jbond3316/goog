@@ -31,6 +31,7 @@ from proxy_support import ProxyConfig
 from inbox_verifier import InboxConfig, test_login as imap_test_login
 from capmonster_solver import CapMonsterError, CapMonsterSolver
 from human_behavior import HumanBehavior
+from recaptcha_solver import test_wit_token
 import google_signin
 
 
@@ -54,6 +55,8 @@ class Job:
         captcha_method: str = "audio",
         capmonster_api_key: str = "",
         human: "HumanBehavior | None" = None,
+        speech_engine: str = "google",
+        wit_token: str = "",
     ):
         self.id = uuid.uuid4().hex
         self.form_urls = form_urls
@@ -70,6 +73,8 @@ class Job:
         self.captcha_method = captcha_method
         self.capmonster_api_key = capmonster_api_key
         self.human = human
+        self.speech_engine = speech_engine
+        self.wit_token = wit_token
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -127,6 +132,8 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             captcha_method=job.captcha_method,
             capmonster_api_key=job.capmonster_api_key,
             human=job.human,
+            speech_engine=job.speech_engine,
+            wit_token=job.wit_token,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -257,6 +264,7 @@ def index() -> str:
         default_imap_username=os.getenv("IMAP_USERNAME", ""),
         default_imap_password_set=bool(os.getenv("IMAP_PASSWORD")),
         default_capmonster_key_set=bool(os.getenv("CAPMONSTER_API_KEY")),
+        default_wit_token_set=bool(os.getenv("WIT_TOKEN")),
     )
 
 
@@ -317,6 +325,23 @@ def api_signin_cancel():
 def api_signin_clear():
     google_signin.clear_master_profile()
     return jsonify({"ok": True})
+
+
+@app.post("/api/test_wit")
+def api_test_wit():
+    data = request.get_json(force=True, silent=True) or {}
+    token = (
+        data.get("token")
+        or os.getenv("WIT_TOKEN")
+        or ""
+    ).strip()
+    if not token:
+        return jsonify({"ok": False, "error": "Token is empty"}), 400
+    try:
+        test_wit_token(token)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+    return jsonify({"ok": True, "message": "OK — wit.ai token accepted"})
 
 
 @app.post("/api/test_capmonster")
@@ -453,6 +478,26 @@ def api_submit():
             )
         }), 400
 
+    speech_engine = (data.get("speech_engine") or "google").strip().lower()
+    if speech_engine not in ("google", "wit"):
+        return jsonify({
+            "error": f"Unknown speech_engine {speech_engine!r}; "
+                     "expected 'google' or 'wit'."
+        }), 400
+    wit_token = (
+        data.get("wit_token")
+        or os.getenv("WIT_TOKEN")
+        or ""
+    ).strip()
+    if captcha_method == "audio" and speech_engine == "wit" and not wit_token:
+        return jsonify({
+            "error": (
+                "wit.ai is selected but no token was provided. "
+                "Get a Server Access Token at https://wit.ai (Settings) "
+                "or set WIT_TOKEN in the environment."
+            )
+        }), 400
+
     inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
 
     human_cfg = _parse_human(data.get("human") or {})
@@ -472,6 +517,8 @@ def api_submit():
         captcha_method=captcha_method,
         capmonster_api_key=capmonster_api_key,
         human=human_cfg,
+        speech_engine=speech_engine,
+        wit_token=wit_token,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

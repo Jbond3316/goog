@@ -161,10 +161,10 @@
               <label class="radio-label">
                 <input type="radio" name="captcha_method" value="audio" checked />
                 <span>
-                  <strong>Audio bypass (free)</strong><br />
+                  <strong>Audio bypass</strong><br />
                   <span class="muted small">Downloads the audio challenge and transcribes
-                  it via Google Speech. No account needed. Google may rate-limit
-                  ("Try again later") on heavy use.</span>
+                  it. Google Speech (free) or wit.ai (free, token required).
+                  Google may rate-limit on heavy use.</span>
                 </span>
               </label>
               <label class="radio-label">
@@ -176,6 +176,42 @@
                   challenge popup never appears. More reliable on rate-limited IPs.</span>
                 </span>
               </label>
+            </div>
+
+            <div id="audio-config" style="margin-top: 12px">
+              <label class="muted small" style="margin-bottom: 6px">Speech engine</label>
+              <div class="captcha-method-grid">
+                <label class="radio-label">
+                  <input type="radio" name="speech_engine" value="google" checked />
+                  <span>
+                    <strong>Google Speech</strong><br />
+                    <span class="muted small">Free. Converts mp3&rarr;wav via ffmpeg
+                    locally and calls Google's free recognizer. Works without an
+                    account; aggressive when Google rate-limits.</span>
+                  </span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="speech_engine" value="wit" />
+                  <span>
+                    <strong>wit.ai</strong><br />
+                    <span class="muted small">Free with a token. Accepts mp3 directly
+                    (no ffmpeg). Sign in at <a href="https://wit.ai" target="_blank" rel="noopener">wit.ai</a>
+                    &rarr; new app &rarr; copy <em>Server Access Token</em>.</span>
+                  </span>
+                </label>
+              </div>
+              <div id="wit-config" hidden style="margin-top: 10px">
+                <label for="wit_token">wit.ai Server Access Token</label>
+                <input
+                  id="wit_token"
+                  type="password"
+                  placeholder="{{ '••• loaded from $WIT_TOKEN' if default_wit_token_set else 'paste your wit.ai token' }}"
+                />
+                <div style="display:flex; align-items:center; gap:14px; margin-top:10px">
+                  <button type="button" id="wit_test" class="ghost-btn">Test token</button>
+                  <span id="wit_test_status" class="muted small"></span>
+                </div>
+              </div>
             </div>
 
             <div id="capmonster-config" hidden style="margin-top: 12px">

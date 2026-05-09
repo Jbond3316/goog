@@ -93,6 +93,11 @@ form.addEventListener("submit", async (e) => {
   const captcha_method = captchaRadio ? captchaRadio.value : "audio";
   const capmonster_api_key =
     document.getElementById("capmonster_api_key").value || "";
+  const speechRadio = document.querySelector(
+    'input[name="speech_engine"]:checked'
+  );
+  const speech_engine = speechRadio ? speechRadio.value : "google";
+  const wit_token = (document.getElementById("wit_token") || {}).value || "";
 
   const human = {
     enabled: document.getElementById("human_enabled").checked,
@@ -178,6 +183,8 @@ form.addEventListener("submit", async (e) => {
         captcha_method,
         capmonster_api_key,
         human,
+        speech_engine,
+        wit_token,
       }),
     });
   } catch (err) {
@@ -385,17 +392,62 @@ setInterval(refreshSigninStatus, 8000);
 const capmonsterConfig = document.getElementById("capmonster-config");
 const capmonsterTestBtn = document.getElementById("capmonster_test");
 const capmonsterTestStatus = document.getElementById("capmonster_test_status");
+const audioConfig = document.getElementById("audio-config");
+const witConfig = document.getElementById("wit-config");
+const witTestBtn = document.getElementById("wit_test");
+const witTestStatus = document.getElementById("wit_test_status");
 
 function reflectCaptchaMethod() {
   const r = document.querySelector('input[name="captcha_method"]:checked');
   const m = r ? r.value : "audio";
   if (capmonsterConfig) capmonsterConfig.hidden = m !== "capmonster";
+  if (audioConfig) audioConfig.hidden = m !== "audio";
+}
+
+function reflectSpeechEngine() {
+  const r = document.querySelector('input[name="speech_engine"]:checked');
+  const v = r ? r.value : "google";
+  if (witConfig) witConfig.hidden = v !== "wit";
 }
 
 document
   .querySelectorAll('input[name="captcha_method"]')
   .forEach((el) => el.addEventListener("change", reflectCaptchaMethod));
+document
+  .querySelectorAll('input[name="speech_engine"]')
+  .forEach((el) => el.addEventListener("change", reflectSpeechEngine));
 reflectCaptchaMethod();
+reflectSpeechEngine();
+
+if (witTestBtn) {
+  witTestBtn.addEventListener("click", async () => {
+    witTestStatus.textContent = "Testing ...";
+    witTestStatus.style.color = "";
+    witTestBtn.disabled = true;
+    try {
+      const r = await fetch("/api/test_wit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: document.getElementById("wit_token").value,
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        witTestStatus.textContent = j.message || "OK";
+        witTestStatus.style.color = "var(--ok)";
+      } else {
+        witTestStatus.textContent = j.error || "Token rejected";
+        witTestStatus.style.color = "var(--err)";
+      }
+    } catch (e) {
+      witTestStatus.textContent = "Network error: " + e;
+      witTestStatus.style.color = "var(--err)";
+    } finally {
+      witTestBtn.disabled = false;
+    }
+  });
+}
 
 if (capmonsterTestBtn) {
   capmonsterTestBtn.addEventListener("click", async () => {

@@ -28,12 +28,34 @@ import tempfile
 import time
 from typing import Optional
 
+import re
+
 import requests
 import urllib3
 from pydub import AudioSegment
 import speech_recognition as sr
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+WIT_AI_ENDPOINT = "https://api.wit.ai/speech?v=20240101"
+
+
+def test_wit_token(token: str) -> None:
+    """Raise on failure, return on success. The /apps endpoint returns
+    the user's app list when the token is valid; 401 otherwise."""
+    if not token or not token.strip():
+        raise ValueError("wit.ai token is empty")
+    r = requests.get(
+        "https://api.wit.ai/apps?v=20240101",
+        headers={"Authorization": f"Bearer {token.strip()}"},
+        timeout=15,
+        verify=False,
+    )
+    if r.status_code == 401:
+        raise RuntimeError("401 Unauthorized — wit.ai rejected the token.")
+    if r.status_code >= 400:
+        raise RuntimeError(f"wit.ai returned HTTP {r.status_code}: {r.text[:200]}")
 from selenium.common.exceptions import (
     NoSuchElementException,
     TimeoutException,
@@ -68,10 +90,19 @@ class RecaptchaSolver:
         driver: WebDriver,
         logger=print,
         proxy: Optional[ProxyConfig] = None,
+        speech_engine: str = "google",
+        wit_token: Optional[str] = None,
     ) -> None:
         self.driver = driver
         self.log = logger
         self.proxy = proxy
+        self.speech_engine = (speech_engine or "google").strip().lower()
+        self.wit_token = (wit_token or "").strip()
+        if self.speech_engine == "wit" and not self.wit_token:
+            raise ValueError(
+                "speech_engine='wit' requires a wit.ai server access "
+                "token (set WIT_TOKEN or paste it into the UI)."
+            )
 
     def click_anchor_if_visible(self, timeout: float = 3.0) -> bool:
         """Click the "I'm not a robot" checkbox if the anchor iframe exists
@@ -170,24 +201,33 @@ class RecaptchaSolver:
         finally:
             self.driver.switch_to.default_content()
 
+    def _download_mp3(self, url: str) -> bytes:
+        proxies = self.proxy.as_requests_proxies() if self.proxy else None
+        resp = requests.get(
+            url,
+            timeout=30,
+            proxies=proxies,
+            verify=False,
+        )
+        resp.raise_for_status()
+        return resp.content
+
     def _transcribe_audio(self, url: str) -> str:
+        mp3_bytes = self._download_mp3(url)
+        if self.speech_engine == "wit":
+            return self._transcribe_via_wit(mp3_bytes)
+        return self._transcribe_via_google(mp3_bytes)
+
+    def _transcribe_via_google(self, mp3_bytes: bytes) -> str:
+        """Convert mp3 -> wav with pydub/ffmpeg, run through
+        SpeechRecognition's free Google Speech endpoint."""
         tmp_dir = tempfile.gettempdir()
         suffix = random.randrange(1, 1_000_000)
         mp3_path = os.path.join(tmp_dir, f"recap_{suffix}.mp3")
         wav_path = os.path.join(tmp_dir, f"recap_{suffix}.wav")
-
         try:
-            proxies = self.proxy.as_requests_proxies() if self.proxy else None
-            resp = requests.get(
-                url,
-                timeout=30,
-                proxies=proxies,
-                verify=False,
-            )
-            resp.raise_for_status()
             with open(mp3_path, "wb") as f:
-                f.write(resp.content)
-
+                f.write(mp3_bytes)
             sound = AudioSegment.from_mp3(mp3_path)
             sound.export(wav_path, format="wav")
 
@@ -202,6 +242,48 @@ class RecaptchaSolver:
                         os.remove(p)
                 except OSError:
                     pass
+
+    def _transcribe_via_wit(self, mp3_bytes: bytes) -> str:
+        """POST the raw MP3 to wit.ai's /speech endpoint. Returns the
+        last non-empty 'text' field from the streamed JSON response."""
+        if not self.wit_token:
+            raise RuntimeError("wit.ai token is empty")
+        try:
+            r = requests.post(
+                WIT_AI_ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {self.wit_token}",
+                    "Content-Type": "audio/mpeg3",
+                },
+                data=mp3_bytes,
+                timeout=30,
+                verify=False,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"wit.ai request failed: {exc}") from exc
+
+        if r.status_code == 401:
+            raise RuntimeError(
+                "wit.ai rejected the token (401 Unauthorized). "
+                "Get a Server Access Token at https://wit.ai (Settings)."
+            )
+        if r.status_code >= 400:
+            raise RuntimeError(
+                f"wit.ai returned HTTP {r.status_code}: "
+                f"{r.text[:200].strip()}"
+            )
+
+        body = r.text or ""
+        transcript = ""
+        for m in re.finditer(r'"text"\s*:\s*"([^"]*)"', body):
+            t = m.group(1).strip()
+            if t:
+                transcript = t
+        if not transcript:
+            raise RuntimeError(
+                f"wit.ai returned no 'text' field. Body: {body[:200]!r}"
+            )
+        return transcript.lower()
 
     def _iframe_visible(self, iframe) -> bool:
         try:
