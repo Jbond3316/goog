@@ -179,6 +179,38 @@ button:disabled {
   transform: none;
 }
 
+.captcha-method-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.captcha-method-grid .radio-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.captcha-method-grid .radio-label:hover {
+  border-color: var(--accent);
+}
+
+.captcha-method-grid .radio-label input[type="radio"] {
+  margin-top: 3px;
+}
+
+@media (max-width: 720px) {
+  .captcha-method-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .ghost-btn {
   margin: 0;
   padding: 8px 14px;

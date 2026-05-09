@@ -34,6 +34,11 @@ from recaptcha_solver import (
 from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 from fingerprint import Fingerprint, build_stealth_js, random_fingerprint
 from inbox_verifier import InboxConfig, wait_for_receipt
+from capmonster_solver import (
+    CapMonsterError,
+    CapMonsterSolver,
+    find_recaptcha_sitekey,
+)
 import google_signin
 
 
@@ -338,6 +343,8 @@ def _attempt_submit(
     inbox_timeout: float = 120.0,
     submit_started_at: Optional[datetime] = None,
     use_signed_in_profile: bool = False,
+    captcha_method: str = "audio",
+    capmonster_api_key: Optional[str] = None,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
@@ -374,21 +381,32 @@ def _attempt_submit(
             if not _tick_send_me_copy(driver, log):
                 log("'Send me a copy' option not present on this form.")
 
-        solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
+        if captcha_method == "capmonster":
+            if not capmonster_api_key:
+                raise RuntimeError(
+                    "Captcha method is 'capmonster' but no API key was "
+                    "provided. Set CAPMONSTER_API_KEY env var or paste it "
+                    "into the UI."
+                )
+            site_key = find_recaptcha_sitekey(driver)
+            if site_key:
+                log(f"Solving via CapMonster (site key: {site_key[:18]}…)")
+                cm = CapMonsterSolver(capmonster_api_key, logger=log)
+                token = cm.solve_recaptcha_v2(
+                    website_url=form_url,
+                    website_key=site_key,
+                    is_invisible=True,
+                )
+                cm.inject_token(driver, token)
+                log("CapMonster token injected.")
+            else:
+                log(
+                    "No reCAPTCHA site key found on page — "
+                    "submitting without pre-solve."
+                )
 
-        if _has_anchor_iframe(driver):
-            log("Checkbox reCAPTCHA detected — clicking anchor first.")
-            solver.click_anchor_if_visible(timeout=5)
-            solver.solve_challenge_if_present(timeout=8)
-
-        if not _click_submit(driver, log):
-            raise RuntimeError("Submit button not found on form.")
-
-        log("Waiting for reCAPTCHA challenge (if any) after submit ...")
-        solved = solver.solve_challenge_if_present(timeout=10)
-
-        if solved:
-            log("Challenge solved.")
+            if not _click_submit(driver, log):
+                raise RuntimeError("Submit button not found on form.")
 
             auto_submitted = False
             end = time.time() + 6
@@ -397,10 +415,37 @@ def _attempt_submit(
                     auto_submitted = True
                     break
                 time.sleep(0.2)
-
             if not auto_submitted:
                 log("Form did not auto-submit; clicking Submit once more.")
                 _click_submit(driver, log)
+        else:
+            solver = RecaptchaSolver(driver, logger=log, proxy=proxy)
+
+            if _has_anchor_iframe(driver):
+                log("Checkbox reCAPTCHA detected — clicking anchor first.")
+                solver.click_anchor_if_visible(timeout=5)
+                solver.solve_challenge_if_present(timeout=8)
+
+            if not _click_submit(driver, log):
+                raise RuntimeError("Submit button not found on form.")
+
+            log("Waiting for reCAPTCHA challenge (if any) after submit ...")
+            solved = solver.solve_challenge_if_present(timeout=10)
+
+            if solved:
+                log("Challenge solved.")
+
+                auto_submitted = False
+                end = time.time() + 6
+                while time.time() < end:
+                    if _confirmation_reached(driver):
+                        auto_submitted = True
+                        break
+                    time.sleep(0.2)
+
+                if not auto_submitted:
+                    log("Form did not auto-submit; clicking Submit once more.")
+                    _click_submit(driver, log)
 
         try:
             WebDriverWait(driver, 30).until(lambda d: _confirmation_reached(d))
@@ -458,6 +503,8 @@ def submit_form(
     inbox: Optional[InboxConfig] = None,
     inbox_timeout: float = 120.0,
     use_signed_in_profile: bool = False,
+    captcha_method: str = "audio",
+    capmonster_api_key: Optional[str] = None,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -490,6 +537,8 @@ def submit_form(
                 inbox_timeout=inbox_timeout,
                 submit_started_at=attempt_start,
                 use_signed_in_profile=use_signed_in_profile,
+                captcha_method=captcha_method,
+                capmonster_api_key=capmonster_api_key,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

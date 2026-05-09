@@ -29,6 +29,7 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from form_submitter import submit_form
 from proxy_support import ProxyConfig
 from inbox_verifier import InboxConfig, test_login as imap_test_login
+from capmonster_solver import CapMonsterError, CapMonsterSolver
 import google_signin
 
 
@@ -49,6 +50,8 @@ class Job:
         inbox: "InboxConfig | None" = None,
         inbox_timeout: float = 120.0,
         use_signed_in_profile: bool = False,
+        captcha_method: str = "audio",
+        capmonster_api_key: str = "",
     ):
         self.id = uuid.uuid4().hex
         self.form_urls = form_urls
@@ -62,6 +65,8 @@ class Job:
         self.inbox = inbox
         self.inbox_timeout = inbox_timeout
         self.use_signed_in_profile = use_signed_in_profile
+        self.captcha_method = captcha_method
+        self.capmonster_api_key = capmonster_api_key
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -116,6 +121,8 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             inbox=job.inbox,
             inbox_timeout=job.inbox_timeout,
             use_signed_in_profile=job.use_signed_in_profile,
+            captcha_method=job.captcha_method,
+            capmonster_api_key=job.capmonster_api_key,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -226,6 +233,7 @@ def index() -> str:
         "index.html",
         default_imap_username=os.getenv("IMAP_USERNAME", ""),
         default_imap_password_set=bool(os.getenv("IMAP_PASSWORD")),
+        default_capmonster_key_set=bool(os.getenv("CAPMONSTER_API_KEY")),
     )
 
 
@@ -286,6 +294,29 @@ def api_signin_cancel():
 def api_signin_clear():
     google_signin.clear_master_profile()
     return jsonify({"ok": True})
+
+
+@app.post("/api/test_capmonster")
+def api_test_capmonster():
+    data = request.get_json(force=True, silent=True) or {}
+    api_key = (
+        data.get("api_key")
+        or os.getenv("CAPMONSTER_API_KEY")
+        or ""
+    ).strip()
+    if not api_key:
+        return jsonify({"ok": False, "error": "API key is empty"}), 400
+    try:
+        cm = CapMonsterSolver(api_key)
+        balance = cm.get_balance()
+    except CapMonsterError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 200
+    return jsonify({
+        "ok": True,
+        "message": f"OK — balance ${balance:.4f}",
+    })
 
 
 @app.post("/api/test_inbox")
@@ -378,6 +409,27 @@ def api_submit():
             )
         }), 400
 
+    captcha_method = (data.get("captcha_method") or "audio").strip().lower()
+    if captcha_method not in ("audio", "capmonster"):
+        return jsonify({
+            "error": f"Unknown captcha_method {captcha_method!r}; "
+                     "expected 'audio' or 'capmonster'."
+        }), 400
+
+    capmonster_api_key = (
+        data.get("capmonster_api_key")
+        or os.getenv("CAPMONSTER_API_KEY")
+        or ""
+    ).strip()
+    if captcha_method == "capmonster" and not capmonster_api_key:
+        return jsonify({
+            "error": (
+                "CapMonster.Cloud is selected but no API key was "
+                "provided. Paste it into the UI or set "
+                "CAPMONSTER_API_KEY in the environment."
+            )
+        }), 400
+
     inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
 
     job = Job(
@@ -392,6 +444,8 @@ def api_submit():
         inbox=inbox_cfg,
         inbox_timeout=inbox_timeout,
         use_signed_in_profile=use_signed_in_profile,
+        captcha_method=captcha_method,
+        capmonster_api_key=capmonster_api_key,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

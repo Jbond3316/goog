@@ -87,6 +87,12 @@ form.addEventListener("submit", async (e) => {
   );
   const send_me_copy = document.getElementById("send_me_copy").checked;
   const use_signed_in_profile = useSignedInBox && useSignedInBox.checked;
+  const captchaRadio = document.querySelector(
+    'input[name="captcha_method"]:checked'
+  );
+  const captcha_method = captchaRadio ? captchaRadio.value : "audio";
+  const capmonster_api_key =
+    document.getElementById("capmonster_api_key").value || "";
 
   const emails = rawEmails
     .split(/[\n,]+/)
@@ -141,6 +147,8 @@ form.addEventListener("submit", async (e) => {
         send_me_copy,
         inbox,
         use_signed_in_profile,
+        captcha_method,
+        capmonster_api_key,
       }),
     });
   } catch (err) {
@@ -343,6 +351,52 @@ if (signinClearBtn) {
 
 refreshSigninStatus();
 setInterval(refreshSigninStatus, 8000);
+
+// ----- captcha method toggle + CapMonster test button -----
+const capmonsterConfig = document.getElementById("capmonster-config");
+const capmonsterTestBtn = document.getElementById("capmonster_test");
+const capmonsterTestStatus = document.getElementById("capmonster_test_status");
+
+function reflectCaptchaMethod() {
+  const r = document.querySelector('input[name="captcha_method"]:checked');
+  const m = r ? r.value : "audio";
+  if (capmonsterConfig) capmonsterConfig.hidden = m !== "capmonster";
+}
+
+document
+  .querySelectorAll('input[name="captcha_method"]')
+  .forEach((el) => el.addEventListener("change", reflectCaptchaMethod));
+reflectCaptchaMethod();
+
+if (capmonsterTestBtn) {
+  capmonsterTestBtn.addEventListener("click", async () => {
+    capmonsterTestStatus.textContent = "Testing ...";
+    capmonsterTestStatus.style.color = "";
+    capmonsterTestBtn.disabled = true;
+    try {
+      const r = await fetch("/api/test_capmonster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: document.getElementById("capmonster_api_key").value,
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        capmonsterTestStatus.textContent = j.message || "OK";
+        capmonsterTestStatus.style.color = "var(--ok)";
+      } else {
+        capmonsterTestStatus.textContent = j.error || "Login failed";
+        capmonsterTestStatus.style.color = "var(--err)";
+      }
+    } catch (e) {
+      capmonsterTestStatus.textContent = "Network error: " + e;
+      capmonsterTestStatus.style.color = "var(--err)";
+    } finally {
+      capmonsterTestBtn.disabled = false;
+    }
+  });
+}
 
 if (imapTestBtn) {
   imapTestBtn.addEventListener("click", async () => {

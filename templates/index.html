@@ -114,6 +114,46 @@
 
           <fieldset class="proxy-box">
             <legend>
+              <span style="margin-left: 6px">Captcha solver</span>
+            </legend>
+            <p class="muted small">Choose how each form's reCAPTCHA gets solved.</p>
+            <div class="captcha-method-grid">
+              <label class="radio-label">
+                <input type="radio" name="captcha_method" value="audio" checked />
+                <span>
+                  <strong>Audio bypass (free)</strong><br />
+                  <span class="muted small">Downloads the audio challenge and transcribes
+                  it via Google Speech. No account needed. Google may rate-limit
+                  ("Try again later") on heavy use.</span>
+                </span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="captcha_method" value="capmonster" />
+                <span>
+                  <strong>CapMonster.Cloud API</strong><br />
+                  <span class="muted small">Paid (~$0.6 / 1000 captchas). Pre-solves the
+                  reCAPTCHA token via API and injects it before submit, so the
+                  challenge popup never appears. More reliable on rate-limited IPs.</span>
+                </span>
+              </label>
+            </div>
+
+            <div id="capmonster-config" hidden style="margin-top: 12px">
+              <label for="capmonster_api_key">CapMonster API key</label>
+              <input
+                id="capmonster_api_key"
+                type="password"
+                placeholder="{{ '••• loaded from $CAPMONSTER_API_KEY' if default_capmonster_key_set else 'Get one at https://capmonster.cloud' }}"
+              />
+              <div style="display:flex; align-items:center; gap:14px; margin-top:10px">
+                <button type="button" id="capmonster_test" class="ghost-btn">Test API key</button>
+                <span id="capmonster_test_status" class="muted small"></span>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="proxy-box">
+            <legend>
               <input id="inbox_enabled" type="checkbox" />
               <label for="inbox_enabled">Verify delivery via IMAP</label>
             </legend>

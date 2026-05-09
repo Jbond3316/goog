@@ -21,7 +21,15 @@ solved using the audio challenge, ported from
 - Optional delay between submissions to avoid rate-limits
 - Optional headless toggle (useful for debugging)
 - Live progress streamed from the server via Server-Sent Events
-- Audio-captcha bypass using Google's own free speech recognition API
+- **Two captcha-solving methods** — pick per run:
+  1. **Audio bypass (free)** — downloads the reCAPTCHA audio challenge
+     and transcribes it via Google's own free speech-recognition
+     endpoint. No account needed.
+  2. **[CapMonster.Cloud](https://capmonster.cloud) API** — paid, ~$0.6
+     per 1000 captchas. Pre-solves the reCAPTCHA token via API and
+     injects it before the form Submit click, so the challenge popup
+     never appears. More reliable on rate-limited IPs. Reads
+     `CAPMONSTER_API_KEY` from the environment as a default.
 - **Authenticated HTTP proxy support** — wires credentials into Chrome
   via a generated `webRequest.onAuthRequired` extension (works out of
   the box with providers like DataImpulse, Bright Data, etc.). Both
