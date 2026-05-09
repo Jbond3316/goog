@@ -35,6 +35,76 @@ class ProxyConfig:
         url = f"{self.scheme}://{userinfo}{self.host}:{self.port}"
         return {"http": url, "https": url}
 
+    def label(self) -> str:
+        return f"{self.host}:{self.port}"
+
+
+def parse_proxy_line(line: str) -> "ProxyConfig | None":
+    """Parse one line of the multi-proxy textarea. Returns None for
+    blanks, comments, or unparseable lines.
+
+    Accepts (auto-detected):
+      * host:port:username:password   (Bright Data / SmartProxy style)
+      * host:port
+      * username:password@host:port
+      * http(s)://username:password@host:port
+    """
+    from urllib.parse import urlparse
+
+    s = (line or "").strip()
+    if not s or s.startswith("#"):
+        return None
+
+    if s.startswith(("http://", "https://", "socks5://", "socks4://")):
+        try:
+            p = urlparse(s)
+        except ValueError:
+            return None
+        if not p.hostname or not p.port:
+            return None
+        return ProxyConfig(
+            host=p.hostname,
+            port=int(p.port),
+            username=p.username or "",
+            password=p.password or "",
+            scheme=p.scheme or "http",
+        )
+
+    if "@" in s:
+        creds, _, hostport = s.rpartition("@")
+        host, _, port = hostport.rpartition(":")
+        if not host or not port.isdigit():
+            return None
+        user, _, pwd = creds.partition(":")
+        return ProxyConfig(
+            host=host, port=int(port), username=user, password=pwd
+        )
+
+    parts = s.split(":")
+    if len(parts) == 4 and parts[1].isdigit():
+        host, port, user, pwd = parts
+        return ProxyConfig(
+            host=host, port=int(port), username=user, password=pwd
+        )
+    if len(parts) == 2 and parts[1].isdigit():
+        host, port = parts
+        return ProxyConfig(host=host, port=int(port))
+
+    return None
+
+
+def parse_proxy_lines(text: str) -> "list[ProxyConfig]":
+    """Parse the multi-proxy textarea content. Silently skips blanks,
+    comments, and unparseable lines."""
+    out: "list[ProxyConfig]" = []
+    if not text:
+        return out
+    for raw in str(text).splitlines():
+        cfg = parse_proxy_line(raw)
+        if cfg is not None:
+            out.append(cfg)
+    return out
+
 
 _BACKGROUND_JS_TEMPLATE = r"""
 var config = {

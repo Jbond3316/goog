@@ -27,7 +27,7 @@ from typing import Dict
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from form_submitter import submit_form
-from proxy_support import ProxyConfig
+from proxy_support import ProxyConfig, parse_proxy_lines
 from inbox_verifier import InboxConfig, test_login as imap_test_login
 from capmonster_solver import CapMonsterError, CapMonsterSolver
 from human_behavior import HumanBehavior
@@ -46,6 +46,7 @@ class Job:
         delay: float,
         headless: bool,
         proxy: "ProxyConfig | None" = None,
+        proxy_pool: "list[ProxyConfig] | None" = None,
         max_retries: int = 2,
         concurrency: int = 1,
         send_me_copy: bool = True,
@@ -64,6 +65,7 @@ class Job:
         self.delay = delay
         self.headless = headless
         self.proxy = proxy
+        self.proxy_pool = proxy_pool or []
         self.max_retries = max_retries
         self.concurrency = max(1, concurrency)
         self.send_me_copy = send_me_copy
@@ -95,6 +97,13 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
     form_url = job.form_urls[form_index]
     form_label = f"form {form_index + 1}"
 
+    if job.proxy_pool:
+        proxy_start_index = (idx - 1) % len(job.proxy_pool)
+        proxy_for_log = job.proxy_pool[proxy_start_index]
+    else:
+        proxy_start_index = 0
+        proxy_for_log = job.proxy
+
     job.emit(
         "progress",
         index=idx,
@@ -124,6 +133,8 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             logger=log,
             headless=job.headless,
             proxy=job.proxy,
+            proxy_pool=job.proxy_pool or None,
+            proxy_start_index=proxy_start_index,
             max_retries=job.max_retries,
             send_me_copy=job.send_me_copy,
             inbox=job.inbox,
@@ -417,23 +428,36 @@ def api_submit():
         return jsonify({"error": "Provide at least one email"}), 400
 
     proxy_cfg: ProxyConfig | None = None
+    proxy_pool: list[ProxyConfig] = []
     proxy_data = data.get("proxy") or {}
     if proxy_data and proxy_data.get("enabled"):
-        host = (proxy_data.get("host") or "").strip()
-        port_raw = str(proxy_data.get("port") or "").strip()
-        if not host or not port_raw:
-            return jsonify({"error": "Proxy host and port are required when enabled"}), 400
-        try:
-            port = int(port_raw)
-        except ValueError:
-            return jsonify({"error": "Proxy port must be an integer"}), 400
-        proxy_cfg = ProxyConfig(
-            host=host,
-            port=port,
-            username=(proxy_data.get("username") or "").strip(),
-            password=(proxy_data.get("password") or ""),
-            scheme=(proxy_data.get("scheme") or "http").strip() or "http",
-        )
+        # Multi-proxy textarea takes priority when non-empty.
+        list_text = proxy_data.get("list") or ""
+        proxy_pool = parse_proxy_lines(list_text)
+
+        if proxy_pool:
+            pass  # use the pool; ignore the single-proxy fields
+        else:
+            host = (proxy_data.get("host") or "").strip()
+            port_raw = str(proxy_data.get("port") or "").strip()
+            if not host or not port_raw:
+                return jsonify({
+                    "error": (
+                        "Proxy is enabled but neither a single host:port "
+                        "nor a non-empty multi-proxy list was provided."
+                    )
+                }), 400
+            try:
+                port = int(port_raw)
+            except ValueError:
+                return jsonify({"error": "Proxy port must be an integer"}), 400
+            proxy_cfg = ProxyConfig(
+                host=host,
+                port=port,
+                username=(proxy_data.get("username") or "").strip(),
+                password=(proxy_data.get("password") or ""),
+                scheme=(proxy_data.get("scheme") or "http").strip() or "http",
+            )
 
     try:
         max_retries = int(data.get("max_retries", 2))
@@ -508,6 +532,7 @@ def api_submit():
         delay=delay,
         headless=headless,
         proxy=proxy_cfg,
+        proxy_pool=proxy_pool,
         max_retries=max_retries,
         concurrency=concurrency,
         send_me_copy=send_me_copy,

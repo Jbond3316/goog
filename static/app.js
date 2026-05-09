@@ -148,6 +148,7 @@ form.addEventListener("submit", async (e) => {
     username: document.getElementById("proxy_username").value.trim(),
     password: document.getElementById("proxy_password").value,
     scheme: "http",
+    list: (document.getElementById("proxy_list") || {}).value || "",
   };
 
   const inbox = {

@@ -550,6 +550,8 @@ def submit_form(
     logger: Optional[Logger] = None,
     headless: bool = True,
     proxy: Optional[ProxyConfig] = None,
+    proxy_pool: Optional[list] = None,
+    proxy_start_index: int = 0,
     max_retries: int = 2,
     retry_backoff: float = 4.0,
     send_me_copy: bool = True,
@@ -570,7 +572,14 @@ def submit_form(
     """
     log: Logger = logger or (lambda msg: None)
     log(f"Opening form for {email} ...")
-    if proxy is not None:
+
+    pool: list = list(proxy_pool) if proxy_pool else []
+    if pool:
+        log(
+            f"Proxy pool: {len(pool)} proxies; first attempt will use #"
+            f"{(proxy_start_index % len(pool)) + 1} ({pool[proxy_start_index % len(pool)].label()})"
+        )
+    elif proxy is not None:
         log(
             f"Using proxy {proxy.host}:{proxy.port} "
             f"(user={proxy.username or '-'})"
@@ -578,8 +587,20 @@ def submit_form(
 
     total_attempts = max_retries + 1
     for attempt in range(1, total_attempts + 1):
-        if attempt > 1:
-            log(f"Attempt {attempt}/{total_attempts} (rotating browser / proxy IP) ...")
+        if pool:
+            cur_proxy = pool[(proxy_start_index + attempt - 1) % len(pool)]
+            log(
+                f"Attempt {attempt}/{total_attempts} via proxy "
+                f"#{((proxy_start_index + attempt - 1) % len(pool)) + 1}: "
+                f"{cur_proxy.label()}"
+            )
+        else:
+            cur_proxy = proxy
+            if attempt > 1:
+                log(
+                    f"Attempt {attempt}/{total_attempts} "
+                    "(rotating browser / proxy IP) ..."
+                )
         attempt_start = datetime.now(timezone.utc)
         try:
             _attempt_submit(
@@ -587,7 +608,7 @@ def submit_form(
                 email=email,
                 log=log,
                 headless=headless,
-                proxy=proxy,
+                proxy=cur_proxy,
                 send_me_copy=send_me_copy,
                 inbox=inbox,
                 inbox_timeout=inbox_timeout,
