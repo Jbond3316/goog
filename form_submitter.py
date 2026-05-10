@@ -92,6 +92,14 @@ def _build_driver(
     fp = fingerprint or random_fingerprint()
 
     opts = ChromeOptions()
+    # 'none' = driver.get() returns IMMEDIATELY without waiting for
+    # the page to load. The WebDriverWait on the email field then
+    # becomes the actual gate — we type as soon as that input renders,
+    # without waiting for fonts/analytics/etc. coming through the slow
+    # proxy. Critical for slow / lossy proxies; otherwise driver.get()
+    # blocks for the entire page_load_timeout (default 30s) on every
+    # submission.
+    opts.page_load_strategy = "none"
     if headless:
         opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
@@ -300,17 +308,25 @@ def _verify_proxy(driver, proxy: ProxyConfig, log: Logger) -> None:
         "https://ifconfig.me/ip",
     ]
     last_err: Optional[str] = None
-    driver.set_page_load_timeout(30)
 
-    for attempt in range(3):
+    # With page_load_strategy="none", driver.get() returns immediately
+    # before any HTTP response. We then poll for the body text.
+    body_wait_seconds = 12.0
+
+    for attempt in range(2):
         for url in endpoints:
             try:
                 driver.get(url)
-                body = ""
                 try:
-                    body = driver.find_element(By.TAG_NAME, "body").text.strip()
-                except WebDriverException:
-                    body = ""
+                    body = WebDriverWait(driver, body_wait_seconds).until(
+                        lambda d: (
+                            (d.find_element(By.TAG_NAME, "body").text or "").strip()
+                            or False
+                        )
+                    )
+                except TimeoutException:
+                    last_err = f"{url}: empty body within {int(body_wait_seconds)}s"
+                    continue
                 if body and len(body) < 64 and any(c.isdigit() for c in body):
                     log(
                         f"Proxy verified. Exit IP: {body.splitlines()[0].strip()}"
@@ -323,7 +339,7 @@ def _verify_proxy(driver, proxy: ProxyConfig, log: Logger) -> None:
                     f"{str(exc).splitlines()[0] if str(exc) else ''}"
                 )
                 continue
-        time.sleep(1.5)
+        time.sleep(0.5)
 
     raise RuntimeError(
         f"Proxy pre-flight failed (proxy={proxy.host}:{proxy.port}): {last_err}"
@@ -402,13 +418,31 @@ def _attempt_submit(
             log("Verifying proxy connectivity ...")
             _verify_proxy(driver, proxy, log)
 
-        driver.get(form_url)
+        # Short page-load timeout — under page_load_strategy='none'
+        # driver.get() returns immediately anyway, but if a downstream
+        # CDP / extension call internally promotes the load to 'normal'
+        # we don't want to block forever here.
+        try:
+            driver.set_page_load_timeout(20)
+        except WebDriverException:
+            pass
+        try:
+            driver.get(form_url)
+        except TimeoutException:
+            log(
+                "driver.get() reported page-load timeout; ignoring and "
+                "polling for the email field anyway."
+            )
 
         if human.enabled:
             time.sleep(rng.uniform(1.2, 2.4))
             human_warmup(driver, human, rng)
 
-        email_input = WebDriverWait(driver, 20).until(
+        # Poll for the email field with a generous timeout — this is
+        # now the ONLY gate. As soon as the input renders we move on,
+        # without waiting for the rest of the page to come over the
+        # slow proxy.
+        email_input = WebDriverWait(driver, 45).until(
             EC.presence_of_element_located(
                 (By.XPATH, "//input[@type='email' or @type='text']")
             )

@@ -128,6 +128,8 @@ def _build_signin_driver(
     proxy: Optional[ProxyConfig] = None,
 ) -> tuple[webdriver.Chrome, Optional[str]]:
     opts = ChromeOptions()
+    # Don't block sign-in on slow proxies / slow Google account pages.
+    opts.page_load_strategy = "eager"
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
