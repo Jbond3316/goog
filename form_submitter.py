@@ -18,7 +18,9 @@ from typing import Callable, Optional
 
 from selenium import webdriver
 from selenium.common.exceptions import (
+    ElementNotInteractableException,
     NoSuchElementException,
+    StaleElementReferenceException,
     TimeoutException,
     WebDriverException,
 )
@@ -440,24 +442,54 @@ def _attempt_submit(
             human_warmup(driver, human, rng)
 
         # Poll for the email field with a generous timeout — this is
-        # now the ONLY gate. As soon as the input renders we move on,
-        # without waiting for the rest of the page to come over the
-        # slow proxy.
+        # now the ONLY gate. We wait for it to be CLICKABLE (present
+        # + displayed + enabled) rather than just present, so React
+        # has had time to attach its handlers and the field is
+        # actually interactable.
+        email_xpath = "//input[@type='email' or @type='text']"
         email_input = WebDriverWait(driver, 45).until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//input[@type='email' or @type='text']")
-            )
+            EC.element_to_be_clickable((By.XPATH, email_xpath))
         )
-        email_input.click()
-        email_input.clear()
+
+        # Belt-and-suspenders: click + clear + send_keys can still
+        # race React's hydration on a heavily-loaded form. Retry a
+        # few times if the element reports as not interactable.
+        last_err: Optional[Exception] = None
+        for attempt in range(6):
+            try:
+                email_input.click()
+                email_input.clear()
+                if human.enabled:
+                    human_type(email_input, email, human, rng)
+                    log(f"Typed email (human-paced): {email}")
+                else:
+                    email_input.send_keys(email)
+                    log(f"Pasted email: {email}")
+                last_err = None
+                break
+            except (
+                ElementNotInteractableException,
+                StaleElementReferenceException,
+                WebDriverException,
+            ) as exc:
+                last_err = exc
+                time.sleep(0.7)
+                # Re-locate in case React replaced the node.
+                try:
+                    email_input = WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, email_xpath))
+                    )
+                except TimeoutException:
+                    continue
+        if last_err is not None:
+            raise RuntimeError(
+                f"Email field never became interactable: "
+                f"{type(last_err).__name__}: {str(last_err).splitlines()[0] if str(last_err) else ''}"
+            )
+
         if human.enabled:
-            human_type(email_input, email, human, rng)
-            log(f"Typed email (human-paced): {email}")
             time.sleep(rng.uniform(0.5, 1.2))
             human_warmup(driver, human, rng)
-        else:
-            email_input.send_keys(email)
-            log(f"Pasted email: {email}")
 
         if send_me_copy:
             if not _tick_send_me_copy(driver, log):
