@@ -237,40 +237,57 @@ SUBMIT_ANOTHER_LABELS = (
 )
 
 
-def _click_submit_another_response(driver, log: Logger) -> bool:
+def _click_submit_another_response(
+    driver,
+    log: Logger,
+    timeout: float = 6.0,
+) -> bool:
     """On a Google Form's confirmation page (/formResponse), click the
     'Submit another response' link, which navigates back to the empty
     /viewform page so the next email can be filled in the same browser.
 
-    Returns True if the link was found and clicked. Returns False
-    silently if the form's owner disabled receipt confirmations or
-    chose 'Show link to submit another response: NO' — the caller
-    should fall back to ``driver.get(form_url)`` in that case.
-    """
-    candidates = []
-    for label in SUBMIT_ANOTHER_LABELS:
-        candidates.append(
-            f"//a[normalize-space(.)={label!r}]"
-        )
-        candidates.append(
-            f"//a[contains(., {label!r})]"
-        )
-    candidates.append("//a[contains(@href, 'viewform')]")
+    Polls for up to ``timeout`` seconds — the link can take a moment
+    to render on slow proxies, especially right after a redirect.
 
-    for xp in candidates:
-        try:
-            elems = driver.find_elements(By.XPATH, xp)
-        except WebDriverException:
-            continue
-        for el in elems:
+    Returns True if the link was found and clicked. Returns False
+    silently if the form's owner disabled the 'Show link to submit
+    another response' option — the caller should fall back to
+    ``driver.get(form_url)`` in that case.
+    """
+    candidates_xpaths = []
+    for label in SUBMIT_ANOTHER_LABELS:
+        candidates_xpaths.append(f"//a[normalize-space(.)={label!r}]")
+        candidates_xpaths.append(f"//a[contains(., {label!r})]")
+    # Last resort: any anchor pointing back at the same form.
+    candidates_xpaths.append("//a[contains(@href, 'viewform')]")
+
+    end = time.time() + timeout
+    while time.time() < end:
+        for xp in candidates_xpaths:
             try:
-                if not el.is_displayed():
-                    continue
-                el.click()
-                log("Clicked 'Submit another response'.")
-                return True
+                elems = driver.find_elements(By.XPATH, xp)
             except WebDriverException:
                 continue
+            for el in elems:
+                try:
+                    if not el.is_displayed():
+                        continue
+                    try:
+                        driver.execute_script(
+                            "arguments[0].scrollIntoView({block: 'center'});",
+                            el,
+                        )
+                    except WebDriverException:
+                        pass
+                    try:
+                        el.click()
+                    except WebDriverException:
+                        driver.execute_script("arguments[0].click();", el)
+                    log("Clicked 'Submit another response'.")
+                    return True
+                except WebDriverException:
+                    continue
+        time.sleep(0.25)
     return False
 
 
@@ -875,6 +892,12 @@ def submit_form_chain(
         except WebDriverException:
             pass
 
+        # The form URL the browser is currently on (after the most
+        # recent navigation). Lets us decide whether the next email
+        # can reuse the page via 'Submit another response' or whether
+        # we need to navigate to a different form.
+        current_form_url: Optional[str] = None
+
         for i, email in enumerate(emails):
             idx = i + 1
             f_idx = email_to_form_index(i) if email_to_form_index else (i % len(form_urls))
@@ -897,8 +920,15 @@ def submit_form_chain(
                             "driver.get() page-load timeout; polling for "
                             "the email field anyway."
                         )
-                else:
-                    per_log("Looking for 'Submit another response' link ...")
+                    current_form_url = form_url
+                elif current_form_url == form_url:
+                    # Same form as previous email — the
+                    # 'Submit another response' link goes back to the
+                    # right /viewform, so we can use it.
+                    per_log(
+                        "Looking for 'Submit another response' link "
+                        "(same form as previous email) ..."
+                    )
                     if not _click_submit_another_response(driver, per_log):
                         per_log(
                             "'Submit another response' not found; "
@@ -911,6 +941,22 @@ def submit_form_chain(
                                 "driver.get() page-load timeout; polling "
                                 "for the email field anyway."
                             )
+                else:
+                    # Different form than the previous email — the
+                    # 'Submit another response' link would point at the
+                    # wrong form. Navigate directly.
+                    per_log(
+                        f"Form changed from previous email; "
+                        f"navigating directly to {form_url}"
+                    )
+                    try:
+                        driver.get(form_url)
+                    except TimeoutException:
+                        per_log(
+                            "driver.get() page-load timeout; polling for "
+                            "the email field anyway."
+                        )
+                    current_form_url = form_url
 
                 _attempt_submit(
                     form_url=form_url,
