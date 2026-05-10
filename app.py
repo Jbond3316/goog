@@ -58,6 +58,7 @@ class Job:
         human: "HumanBehavior | None" = None,
         speech_engine: str = "google",
         wit_token: str = "",
+        verify_proxy_at_startup: bool = False,
     ):
         self.id = uuid.uuid4().hex
         self.form_urls = form_urls
@@ -77,6 +78,7 @@ class Job:
         self.human = human
         self.speech_engine = speech_engine
         self.wit_token = wit_token
+        self.verify_proxy_at_startup = verify_proxy_at_startup
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -145,6 +147,7 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             human=job.human,
             speech_engine=job.speech_engine,
             wit_token=job.wit_token,
+            verify_proxy_at_startup=job.verify_proxy_at_startup,
         )
     except Exception as exc:
         log(f"Unhandled error: {exc}")
@@ -522,6 +525,8 @@ def api_submit():
             )
         }), 400
 
+    verify_proxy_at_startup = bool(data.get("verify_proxy_at_startup", False))
+
     inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
 
     human_cfg = _parse_human(data.get("human") or {})
@@ -544,6 +549,7 @@ def api_submit():
         human=human_cfg,
         speech_engine=speech_engine,
         wit_token=wit_token,
+        verify_proxy_at_startup=verify_proxy_at_startup,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

@@ -320,6 +320,15 @@
               again later" block on one IP is unblocked by a different
               IP on the very next attempt.
             </p>
+
+            <div class="checkbox" style="margin-top: 10px">
+              <input id="verify_proxy_at_startup" type="checkbox" />
+              <label for="verify_proxy_at_startup">
+                Verify proxy IP before each submission
+                <span class="muted small">(off by default; saves ~3-15s
+                per submission on slow proxies)</span>
+              </label>
+            </div>
           </fieldset>
 
           <button id="go" type="submit">Start submissions</button>

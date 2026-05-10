@@ -379,6 +379,7 @@ def _attempt_submit(
     human: Optional[HumanBehavior] = None,
     speech_engine: str = "google",
     wit_token: Optional[str] = None,
+    verify_proxy_at_startup: bool = False,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
@@ -414,7 +415,7 @@ def _attempt_submit(
             f"screen {human.screen_width}x{human.screen_height}"
         )
     try:
-        if proxy is not None:
+        if proxy is not None and verify_proxy_at_startup:
             log("Verifying proxy connectivity ...")
             _verify_proxy(driver, proxy, log)
 
@@ -597,6 +598,7 @@ def submit_form(
     human: Optional[HumanBehavior] = None,
     speech_engine: str = "google",
     wit_token: Optional[str] = None,
+    verify_proxy_at_startup: bool = False,
 ) -> SubmitResult:
     """Fill the email field and submit a single Google Form response.
 
@@ -653,6 +655,7 @@ def submit_form(
                 human=human,
                 speech_engine=speech_engine,
                 wit_token=wit_token,
+                verify_proxy_at_startup=verify_proxy_at_startup,
             )
             return SubmitResult(
                 email=email, success=True, message="Submitted successfully"

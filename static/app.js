@@ -150,6 +150,9 @@ form.addEventListener("submit", async (e) => {
     scheme: "http",
     list: (document.getElementById("proxy_list") || {}).value || "",
   };
+  const verify_proxy_at_startup = document.getElementById(
+    "verify_proxy_at_startup"
+  ).checked;
 
   const inbox = {
     enabled: document.getElementById("inbox_enabled").checked,
@@ -186,6 +189,7 @@ form.addEventListener("submit", async (e) => {
         human,
         speech_engine,
         wit_token,
+        verify_proxy_at_startup,
       }),
     });
   } catch (err) {
