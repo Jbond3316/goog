@@ -230,6 +230,50 @@ SEND_COPY_LABELS = (
 )
 
 
+SUBMIT_ANOTHER_LABELS = (
+    "Submit another response",
+    "Submit another",
+    "submit another response",
+)
+
+
+def _click_submit_another_response(driver, log: Logger) -> bool:
+    """On a Google Form's confirmation page (/formResponse), click the
+    'Submit another response' link, which navigates back to the empty
+    /viewform page so the next email can be filled in the same browser.
+
+    Returns True if the link was found and clicked. Returns False
+    silently if the form's owner disabled receipt confirmations or
+    chose 'Show link to submit another response: NO' — the caller
+    should fall back to ``driver.get(form_url)`` in that case.
+    """
+    candidates = []
+    for label in SUBMIT_ANOTHER_LABELS:
+        candidates.append(
+            f"//a[normalize-space(.)={label!r}]"
+        )
+        candidates.append(
+            f"//a[contains(., {label!r})]"
+        )
+    candidates.append("//a[contains(@href, 'viewform')]")
+
+    for xp in candidates:
+        try:
+            elems = driver.find_elements(By.XPATH, xp)
+        except WebDriverException:
+            continue
+        for el in elems:
+            try:
+                if not el.is_displayed():
+                    continue
+                el.click()
+                log("Clicked 'Submit another response'.")
+                return True
+            except WebDriverException:
+                continue
+    return False
+
+
 def _tick_send_me_copy(driver, log: Logger) -> bool:
     """If the form has the optional 'Send me a copy of my responses'
     checkbox, click it. Some forms enable email confirmations only
@@ -382,6 +426,8 @@ def _attempt_submit(
     speech_engine: str = "google",
     wit_token: Optional[str] = None,
     verify_proxy_at_startup: bool = False,
+    existing_driver_bundle: Optional[tuple] = None,
+    skip_navigate: bool = False,
 ) -> None:
     """Run one full submission attempt in a fresh browser. Raises on
     failure; returns None on success."""
@@ -396,13 +442,18 @@ def _attempt_submit(
         fp_override.window_width = human.window_width
         fp_override.window_height = human.window_height
 
-    driver, ext_dir, user_data_dir, fp = _build_driver(
-        headless=headless,
-        proxy=proxy,
-        use_signed_in_profile=use_signed_in_profile,
-        fingerprint=fp_override,
-    )
-    if use_signed_in_profile:
+    if existing_driver_bundle is not None:
+        driver, ext_dir, user_data_dir, fp = existing_driver_bundle
+        owns_driver = False
+    else:
+        driver, ext_dir, user_data_dir, fp = _build_driver(
+            headless=headless,
+            proxy=proxy,
+            use_signed_in_profile=use_signed_in_profile,
+            fingerprint=fp_override,
+        )
+        owns_driver = True
+    if use_signed_in_profile and owns_driver:
         log("Using cloned signed-in Google profile.")
     ua_short = fp.user_agent.split(") ", 1)[0] + ")"
     log(
@@ -417,7 +468,7 @@ def _attempt_submit(
             f"screen {human.screen_width}x{human.screen_height}"
         )
     try:
-        if proxy is not None and verify_proxy_at_startup:
+        if owns_driver and proxy is not None and verify_proxy_at_startup:
             log("Verifying proxy connectivity ...")
             _verify_proxy(driver, proxy, log)
 
@@ -429,13 +480,14 @@ def _attempt_submit(
             driver.set_page_load_timeout(20)
         except WebDriverException:
             pass
-        try:
-            driver.get(form_url)
-        except TimeoutException:
-            log(
-                "driver.get() reported page-load timeout; ignoring and "
-                "polling for the email field anyway."
-            )
+        if not skip_navigate:
+            try:
+                driver.get(form_url)
+            except TimeoutException:
+                log(
+                    "driver.get() reported page-load timeout; ignoring and "
+                    "polling for the email field anyway."
+                )
 
         if human.enabled:
             time.sleep(rng.uniform(1.2, 2.4))
@@ -603,12 +655,13 @@ def _attempt_submit(
                     "or Gmail throttled the receipt."
                 )
     finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-        cleanup_extension(ext_dir)
-        cleanup_extension(user_data_dir)
+        if owns_driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            cleanup_extension(ext_dir)
+            cleanup_extension(user_data_dir)
 
 
 def submit_form(
@@ -717,3 +770,194 @@ def submit_form(
     return SubmitResult(
         email=email, success=False, message="No attempts were made."
     )
+
+
+def submit_form_chain(
+    form_urls: list,
+    emails: list,
+    logger: Optional[Logger] = None,
+    headless: bool = True,
+    proxy: Optional[ProxyConfig] = None,
+    proxy_pool: Optional[list] = None,
+    proxy_start_index: int = 0,
+    send_me_copy: bool = True,
+    inbox: Optional[InboxConfig] = None,
+    inbox_timeout: float = 120.0,
+    use_signed_in_profile: bool = False,
+    captcha_method: str = "audio",
+    capmonster_api_key: Optional[str] = None,
+    human: Optional[HumanBehavior] = None,
+    speech_engine: str = "google",
+    wit_token: Optional[str] = None,
+    verify_proxy_at_startup: bool = False,
+    on_result: Optional[Callable] = None,
+    on_log: Optional[Callable] = None,
+    email_to_form_index: Optional[Callable] = None,
+) -> "list[SubmitResult]":
+    """Submit a list of emails through ONE persistent browser.
+
+    The first email triggers a normal navigation to the form; every
+    subsequent email clicks the "Submit another response" link on
+    Google Forms' confirmation page, returning to a fresh /viewform
+    in the same browser. This skips browser startup, profile clone,
+    fingerprint setup and proxy verify for emails 2..N.
+
+    Per-attempt proxy rotation (the retry-on-block feature) is NOT
+    used here — when reusing the browser, each email gets one shot
+    with whatever proxy the browser was started with. The caller's
+    `proxy_pool[proxy_start_index]` is the proxy for the whole chain.
+
+    Callbacks (all optional):
+      * ``on_log(idx, email, msg)``  — per-line log events.
+      * ``on_result(idx, email, SubmitResult)`` — fires once per email.
+      * ``email_to_form_index(idx)`` — maps 0-based email index to a
+         form index (defaults to round-robin across ``form_urls``).
+    """
+    rng = random.Random()
+    human = human or HumanBehavior(enabled=False)
+
+    chain_log = logger or (lambda msg: None)
+
+    if not emails:
+        return []
+
+    cur_proxy = proxy
+    if proxy_pool:
+        cur_proxy = proxy_pool[proxy_start_index % len(proxy_pool)]
+        chain_log(
+            f"Reuse-browser chain: proxy #"
+            f"{(proxy_start_index % len(proxy_pool)) + 1} "
+            f"({cur_proxy.label()}); will run all "
+            f"{len(emails)} email(s) through it."
+        )
+    elif cur_proxy is not None:
+        chain_log(
+            f"Reuse-browser chain: proxy {cur_proxy.host}:{cur_proxy.port} "
+            f"for all {len(emails)} email(s)."
+        )
+
+    fp_override: Optional[Fingerprint] = None
+    if human.enabled:
+        fp_override = random_fingerprint()
+        fp_override.screen_width = human.screen_width
+        fp_override.screen_height = human.screen_height
+        fp_override.window_width = human.window_width
+        fp_override.window_height = human.window_height
+
+    bundle = _build_driver(
+        headless=headless,
+        proxy=cur_proxy,
+        use_signed_in_profile=use_signed_in_profile,
+        fingerprint=fp_override,
+    )
+    driver, ext_dir, user_data_dir, fp = bundle
+    ua_short = fp.user_agent.split(") ", 1)[0] + ")"
+    chain_log(
+        f"Fingerprint: {ua_short} | {fp.platform} | {fp.timezone} | "
+        f"{fp.screen_width}x{fp.screen_height} | GPU={fp.webgl_renderer[:40]}"
+    )
+
+    results: "list[SubmitResult]" = []
+    proxy_verified = False
+
+    try:
+        if cur_proxy is not None and verify_proxy_at_startup:
+            chain_log("Verifying proxy connectivity ...")
+            try:
+                _verify_proxy(driver, cur_proxy, chain_log)
+                proxy_verified = True
+            except Exception as exc:
+                chain_log(f"Proxy verify failed: {exc}")
+                # Continue — verification was the user's choice; if it
+                # fails the form load will fail too with a clearer error.
+        try:
+            driver.set_page_load_timeout(20)
+        except WebDriverException:
+            pass
+
+        for i, email in enumerate(emails):
+            idx = i + 1
+            f_idx = email_to_form_index(i) if email_to_form_index else (i % len(form_urls))
+            form_url = form_urls[f_idx]
+
+            def per_log(msg: str, _idx=idx, _e=email) -> None:
+                if on_log is not None:
+                    on_log(_idx, _e, msg)
+                else:
+                    chain_log(f"[{_idx}/{len(emails)}] {_e}: {msg}")
+
+            attempt_start = datetime.now(timezone.utc)
+            try:
+                if i == 0:
+                    per_log(f"Navigating to form (1st email): {form_url}")
+                    try:
+                        driver.get(form_url)
+                    except TimeoutException:
+                        per_log(
+                            "driver.get() page-load timeout; polling for "
+                            "the email field anyway."
+                        )
+                else:
+                    per_log("Looking for 'Submit another response' link ...")
+                    if not _click_submit_another_response(driver, per_log):
+                        per_log(
+                            "'Submit another response' not found; "
+                            f"reloading form: {form_url}"
+                        )
+                        try:
+                            driver.get(form_url)
+                        except TimeoutException:
+                            per_log(
+                                "driver.get() page-load timeout; polling "
+                                "for the email field anyway."
+                            )
+
+                _attempt_submit(
+                    form_url=form_url,
+                    email=email,
+                    log=per_log,
+                    headless=headless,
+                    proxy=cur_proxy,
+                    send_me_copy=send_me_copy,
+                    inbox=inbox,
+                    inbox_timeout=inbox_timeout,
+                    submit_started_at=attempt_start,
+                    use_signed_in_profile=False,  # already cloned
+                    captcha_method=captcha_method,
+                    capmonster_api_key=capmonster_api_key,
+                    human=human,
+                    speech_engine=speech_engine,
+                    wit_token=wit_token,
+                    verify_proxy_at_startup=False,
+                    existing_driver_bundle=bundle,
+                    skip_navigate=True,
+                )
+                result = SubmitResult(
+                    email=email, success=True, message="Submitted successfully"
+                )
+            except Exception as exc:
+                msg = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+                per_log(f"FAILED — {msg}")
+                result = SubmitResult(
+                    email=email, success=False, message=msg or exc.__class__.__name__
+                )
+                # Best-effort: navigate back so the next iteration starts
+                # from a clean state, not stuck on a captcha popup.
+                try:
+                    driver.get(form_url)
+                except WebDriverException:
+                    pass
+
+            results.append(result)
+            if on_result is not None:
+                on_result(idx, email, result)
+
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        cleanup_extension(ext_dir)
+        cleanup_extension(user_data_dir)
+
+    return results

@@ -153,6 +153,7 @@ form.addEventListener("submit", async (e) => {
   const verify_proxy_at_startup = document.getElementById(
     "verify_proxy_at_startup"
   ).checked;
+  const reuse_browser = document.getElementById("reuse_browser").checked;
 
   const inbox = {
     enabled: document.getElementById("inbox_enabled").checked,
@@ -190,6 +191,7 @@ form.addEventListener("submit", async (e) => {
         speech_engine,
         wit_token,
         verify_proxy_at_startup,
+        reuse_browser,
       }),
     });
   } catch (err) {
@@ -229,10 +231,12 @@ form.addEventListener("submit", async (e) => {
       const c = payload.concurrency || 1;
       const fc = payload.form_count || 1;
       const formStr = fc > 1 ? `, ${fc} forms (round-robin)` : "";
+      const reuseStr = payload.reuse_browser ? " [reuse-browser mode]" : "";
       appendLog(
         `Started — ${payload.total} email(s)` +
           (c > 1 ? `, ${c} parallel browser(s)` : "") +
-          formStr
+          formStr +
+          reuseStr
       );
     } else if (event === "progress") {
       setBadge(payload.email, "running", "running");
