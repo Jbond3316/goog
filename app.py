@@ -57,6 +57,7 @@ class Job:
         wit_token: str = "",
         verify_proxy_at_startup: bool = False,
         reuse_browser: bool = False,
+        max_per_browser: int = 0,
     ):
         self.id = uuid.uuid4().hex
         self.form_urls = form_urls
@@ -76,6 +77,7 @@ class Job:
         self.wit_token = wit_token
         self.verify_proxy_at_startup = verify_proxy_at_startup
         self.reuse_browser = reuse_browser
+        self.max_per_browser = max(0, int(max_per_browser or 0))
         self.cancelled = False
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
@@ -174,10 +176,19 @@ def _submit_chunk(
     job: Job,
     indices: "list[int]",
     chunk_emails: "list[str]",
+    form_idx: "int | None" = None,
 ) -> "tuple[int, int]":
-    """Run a chunk of emails through ONE persistent browser via
-    submit_form_chain. Emits per-email progress/log/result events.
-    Returns (success_count, failure_count) for this chunk."""
+    """Run a chunk of emails through ONE form. If ``form_idx`` is set,
+    every email in the chunk is submitted to ``job.form_urls[form_idx]``
+    and every transition between emails uses 'Submit another response'.
+
+    The chunk is split into "browser sessions" of ``job.max_per_browser``
+    emails each (0 = unlimited = one session for the whole chunk). Each
+    session is its own submit_form_chain call, which means a fresh
+    Chrome / fresh fingerprint / fresh proxy TCP session every N emails.
+
+    Emits per-email progress/log/result events. Returns
+    (success_count, failure_count) for this chunk."""
     total = len(job.emails)
 
     starting_idx = indices[0]
@@ -189,6 +200,8 @@ def _submit_chunk(
     # Per-email metadata so progress events still match what the
     # non-batch path emits (form label + form index per email).
     def email_to_form_index(local_i: int) -> int:
+        if form_idx is not None:
+            return form_idx
         global_i = indices[local_i]
         return (global_i - 1) % len(job.form_urls)
 
@@ -234,75 +247,185 @@ def _submit_chunk(
             status="starting",
         )
 
-    def per_email_result(local_idx_oneindexed: int, email, result) -> None:
-        nonlocal successes, failures
-        global_idx = indices[local_idx_oneindexed - 1]
-        f_idx = (global_idx - 1) % len(job.form_urls)
-        if result.success:
-            successes += 1
-        else:
-            failures += 1
-        job.emit(
-            "result",
-            index=global_idx,
-            total=total,
-            email=email,
-            form_index=f_idx + 1,
-            success=result.success,
-            message=result.message,
+    # Build sessions: when max_per_browser is 0, the whole chunk runs
+    # in one browser. Otherwise we split it into back-to-back sessions
+    # of max_per_browser each — each session is its own
+    # submit_form_chain call (= new browser, fresh fingerprint, fresh
+    # proxy TCP session, fresh user-data-dir).
+    if job.max_per_browser and job.max_per_browser > 0:
+        session_starts = list(range(0, len(chunk_emails), job.max_per_browser))
+    else:
+        session_starts = [0]
+
+    for session_no, start in enumerate(session_starts, start=1):
+        if job.cancelled:
+            break
+
+        end = (
+            start + job.max_per_browser
+            if job.max_per_browser and job.max_per_browser > 0
+            else len(chunk_emails)
         )
+        sess_indices = indices[start:end]
+        sess_emails = chunk_emails[start:end]
+        if not sess_emails:
+            continue
 
-    # The chain function doesn't emit "progress" itself, so we emit it
-    # manually before the chain starts processing each email by wrapping
-    # on_log with a one-shot progress emit.
-    progress_emitted: "set[int]" = set()
-
-    def on_log_with_progress(idx: int, email: str, msg: str) -> None:
-        if idx not in progress_emitted:
-            emit_progress_for(idx, email)
-            progress_emitted.add(idx)
-        per_email_log(idx, email, msg)
-
-    try:
-        submit_form_chain(
-            form_urls=job.form_urls,
-            emails=chunk_emails,
-            logger=chain_log,
-            headless=job.headless,
-            proxy=job.proxy,
-            proxy_pool=job.proxy_pool or None,
-            proxy_start_index=proxy_start_index,
-            send_me_copy=job.send_me_copy,
-            use_signed_in_profile=job.use_signed_in_profile,
-            captcha_method=job.captcha_method,
-            capmonster_api_key=job.capmonster_api_key,
-            human=job.human,
-            speech_engine=job.speech_engine,
-            wit_token=job.wit_token,
-            verify_proxy_at_startup=job.verify_proxy_at_startup,
-            on_log=on_log_with_progress,
-            on_result=per_email_result,
-            email_to_form_index=email_to_form_index,
-            should_stop=lambda: job.cancelled,
-        )
-    except Exception as exc:
-        # Catastrophic chain failure (e.g. driver couldn't start). Mark
-        # any unprocessed emails in the chunk as failed.
-        already_done = successes + failures
-        for local_i in range(already_done, len(chunk_emails)):
-            global_idx = indices[local_i]
-            email = chunk_emails[local_i]
-            f_idx = (global_idx - 1) % len(job.form_urls)
-            job.emit(
-                "result",
-                index=global_idx,
-                total=total,
-                email=email,
-                form_index=f_idx + 1,
-                success=False,
-                message=f"Chain aborted: {exc}",
+        if len(session_starts) > 1:
+            chain_log(
+                f"Browser session {session_no}/{len(session_starts)}: "
+                f"emails {sess_indices[0]}..{sess_indices[-1]}"
             )
-            failures += 1
+
+        # Closures bound per session — the inner chain hands us
+        # session-local 1-based indices; we translate to global.
+        def make_per_log(s_indices):
+            def per_log(local_idx_oneindexed: int, email: str, msg: str) -> None:
+                global_idx = s_indices[local_idx_oneindexed - 1]
+                f_idx = (
+                    form_idx if form_idx is not None
+                    else (global_idx - 1) % len(job.form_urls)
+                )
+                job.emit(
+                    "log",
+                    index=global_idx,
+                    total=total,
+                    email=email,
+                    form_label=f"form {f_idx + 1}",
+                    message=msg,
+                )
+            return per_log
+
+        def make_progress(s_indices):
+            def emit_progress(local_idx_oneindexed: int, email: str) -> None:
+                global_idx = s_indices[local_idx_oneindexed - 1]
+                f_idx = (
+                    form_idx if form_idx is not None
+                    else (global_idx - 1) % len(job.form_urls)
+                )
+                job.emit(
+                    "progress",
+                    index=global_idx,
+                    total=total,
+                    email=email,
+                    form_index=f_idx + 1,
+                    form_total=len(job.form_urls),
+                    status="starting",
+                )
+            return emit_progress
+
+        def make_per_email_result(s_indices):
+            def on_res(local_idx_oneindexed: int, email, result) -> None:
+                nonlocal successes, failures
+                global_idx = s_indices[local_idx_oneindexed - 1]
+                f_idx = (
+                    form_idx if form_idx is not None
+                    else (global_idx - 1) % len(job.form_urls)
+                )
+                if result.success:
+                    successes += 1
+                else:
+                    failures += 1
+                job.emit(
+                    "result",
+                    index=global_idx,
+                    total=total,
+                    email=email,
+                    form_index=f_idx + 1,
+                    success=result.success,
+                    message=result.message,
+                )
+            return on_res
+
+        def make_email_to_form(form_idx_local, s_indices):
+            def f(local_i: int) -> int:
+                if form_idx_local is not None:
+                    return form_idx_local
+                global_i = s_indices[local_i]
+                return (global_i - 1) % len(job.form_urls)
+            return f
+
+        per_log_cb = make_per_log(sess_indices)
+        emit_progress_cb = make_progress(sess_indices)
+        on_result_cb = make_per_email_result(sess_indices)
+        e2f = make_email_to_form(form_idx, sess_indices)
+
+        progress_emitted: "set[int]" = set()
+
+        def make_on_log_with_progress(per_log, emit_progress, seen):
+            def on_log_with_progress(idx: int, email: str, msg: str) -> None:
+                if idx not in seen:
+                    emit_progress(idx, email)
+                    seen.add(idx)
+                per_log(idx, email, msg)
+            return on_log_with_progress
+
+        on_log_cb = make_on_log_with_progress(
+            per_log_cb, emit_progress_cb, progress_emitted
+        )
+
+        # Each session uses the next proxy in the pool to maximize
+        # IP diversity across browser restarts.
+        sess_proxy_start = (
+            (proxy_start_index + (session_no - 1)) % len(job.proxy_pool)
+            if job.proxy_pool else 0
+        )
+
+        # Track which session-local indices the chain emitted a
+        # result for so on a chain crash we can mark only the
+        # truly unprocessed emails as aborted.
+        completed_local: "set[int]" = set()
+
+        original_on_result = on_result_cb
+
+        def on_res_tracking(local_idx_oneindexed: int, email, result, _orig=original_on_result):
+            completed_local.add(local_idx_oneindexed)
+            _orig(local_idx_oneindexed, email, result)
+
+        try:
+            submit_form_chain(
+                form_urls=job.form_urls,
+                emails=sess_emails,
+                logger=chain_log,
+                headless=job.headless,
+                proxy=job.proxy,
+                proxy_pool=job.proxy_pool or None,
+                proxy_start_index=sess_proxy_start,
+                send_me_copy=job.send_me_copy,
+                use_signed_in_profile=job.use_signed_in_profile,
+                captcha_method=job.captcha_method,
+                capmonster_api_key=job.capmonster_api_key,
+                human=job.human,
+                speech_engine=job.speech_engine,
+                wit_token=job.wit_token,
+                verify_proxy_at_startup=job.verify_proxy_at_startup,
+                on_log=on_log_cb,
+                on_result=on_res_tracking,
+                email_to_form_index=e2f,
+                should_stop=lambda: job.cancelled,
+            )
+        except Exception as exc:
+            # Mark any session emails that didn't get a result as
+            # aborted. The next session still runs.
+            for local_i in range(len(sess_emails)):
+                if (local_i + 1) in completed_local:
+                    continue
+                global_idx = sess_indices[local_i]
+                email = sess_emails[local_i]
+                f_idx = (
+                    form_idx if form_idx is not None
+                    else (global_idx - 1) % len(job.form_urls)
+                )
+                job.emit(
+                    "result",
+                    index=global_idx,
+                    total=total,
+                    email=email,
+                    form_index=f_idx + 1,
+                    success=False,
+                    message=f"Chain aborted: {exc}",
+                )
+                failures += 1
 
     return successes, failures
 
@@ -319,46 +442,82 @@ def _run_job(job: Job) -> None:
     )
 
     if job.reuse_browser:
-        # Partition emails into N chunks, one per worker. Use round-robin
-        # rather than contiguous slabs so the proxy assignment for the
-        # 1st email of each chunk matches what the per-email code path
-        # would have picked.
+        # Form-affinity partitioning: each browser handles emails for
+        # ONE form. Emails go to forms round-robin (email i -> form
+        # (i-1)%N_forms), then for each form's bucket of emails we
+        # split them across the workers we've been allocated for that
+        # form.
+        n_forms = len(job.form_urls)
         n_workers = max(1, min(job.concurrency, len(job.emails)))
-        chunks_indices: "list[list[int]]" = [[] for _ in range(n_workers)]
-        chunks_emails: "list[list[str]]" = [[] for _ in range(n_workers)]
+
+        # Group emails by form.
+        form_groups: "list[list[tuple[int, str]]]" = [
+            [] for _ in range(n_forms)
+        ]
         for i, email in enumerate(job.emails, start=1):
-            w = (i - 1) % n_workers
-            chunks_indices[w].append(i)
-            chunks_emails[w].append(email)
+            form_groups[(i - 1) % n_forms].append((i, email))
+
+        # Allocate workers across forms: each form gets at least one
+        # worker if it has emails; remaining workers go to the
+        # form(s) with the most emails.
+        workers_per_form = [1 if g else 0 for g in form_groups]
+        forms_in_use = sum(1 for g in form_groups if g)
+        remaining = max(0, n_workers - forms_in_use)
+        # Hand remaining workers to the largest groups.
+        order = sorted(
+            (i for i in range(n_forms) if form_groups[i]),
+            key=lambda i: -len(form_groups[i]),
+        )
+        idx = 0
+        while remaining > 0 and order:
+            workers_per_form[order[idx % len(order)]] += 1
+            remaining -= 1
+            idx += 1
+
+        # Build chunks: for each form, slice its emails into
+        # ``workers_per_form[fi]`` contiguous sub-chunks (one per
+        # worker assigned to that form).
+        chunks_meta: "list[tuple[int, list[int], list[str]]]" = []
+        for fi, group in enumerate(form_groups):
+            workers = workers_per_form[fi]
+            if not group or workers <= 0:
+                continue
+            per = (len(group) + workers - 1) // workers
+            for w in range(workers):
+                sub = group[w * per : (w + 1) * per]
+                if sub:
+                    chunks_meta.append(
+                        (fi, [g for g, _ in sub], [e for _, e in sub])
+                    )
 
         successes_total = 0
         failures_total = 0
         counts_lock = threading.Lock()
 
-        def chunk_worker(w_indices, w_emails):
+        def chunk_worker(form_idx, w_indices, w_emails):
             nonlocal successes_total, failures_total
-            s, f = _submit_chunk(job, w_indices, w_emails)
+            s, f = _submit_chunk(
+                job, w_indices, w_emails, form_idx=form_idx
+            )
             with counts_lock:
                 successes_total += s
                 failures_total += f
 
-        if n_workers <= 1:
-            chunk_worker(chunks_indices[0], chunks_emails[0])
+        n_chunks = len(chunks_meta)
+        if n_chunks <= 1:
+            if n_chunks == 1:
+                chunk_worker(*chunks_meta[0])
         else:
             stagger = job.delay if job.delay > 0 else 0.0
             with ThreadPoolExecutor(
-                max_workers=n_workers,
+                max_workers=n_chunks,
                 thread_name_prefix=f"chain-{job.id[:6]}",
             ) as pool:
                 futures = []
-                for w in range(n_workers):
-                    if w > 0 and stagger > 0:
+                for c_idx, meta in enumerate(chunks_meta):
+                    if c_idx > 0 and stagger > 0:
                         time.sleep(stagger)
-                    futures.append(
-                        pool.submit(
-                            chunk_worker, chunks_indices[w], chunks_emails[w]
-                        )
-                    )
+                    futures.append(pool.submit(chunk_worker, *meta))
                 for fut in futures:
                     fut.result()
 
@@ -725,6 +884,11 @@ def api_submit():
 
     verify_proxy_at_startup = bool(data.get("verify_proxy_at_startup", False))
     reuse_browser = bool(data.get("reuse_browser", False))
+    try:
+        max_per_browser = int(data.get("max_per_browser", 0))
+    except (TypeError, ValueError):
+        max_per_browser = 0
+    max_per_browser = max(0, min(max_per_browser, 1000))
 
     human_cfg = _parse_human(data.get("human") or {})
 
@@ -746,6 +910,7 @@ def api_submit():
         wit_token=wit_token,
         verify_proxy_at_startup=verify_proxy_at_startup,
         reuse_browser=reuse_browser,
+        max_per_browser=max_per_browser,
     )
     with JOBS_LOCK:
         JOBS[job.id] = job

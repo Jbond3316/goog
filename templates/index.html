@@ -86,8 +86,24 @@
             <input id="reuse_browser" name="reuse_browser" type="checkbox" />
             <label for="reuse_browser">
               Reuse browser across emails
-              <span class="muted small">(after each submission, click "Submit another response" instead of opening a new browser — much faster, but all emails in the chunk share the same IP / fingerprint)</span>
+              <span class="muted small">(after each submission, click "Submit another response" — much faster. Each browser handles one form's emails. With 2 forms and 2 browsers, each browser sticks to its own form.)</span>
             </label>
+          </div>
+
+          <div id="reuse-config" hidden style="margin-top: 8px; padding-left: 26px">
+            <label for="max_per_browser">
+              Max submissions per browser
+              <span class="muted small">(0 = unlimited; otherwise the browser closes and a new one opens after this many emails — fresh fingerprint, fresh proxy session)</span>
+            </label>
+            <input
+              id="max_per_browser"
+              type="number"
+              min="0"
+              max="1000"
+              step="1"
+              value="0"
+              style="width: 120px"
+            />
           </div>
 
           <fieldset class="proxy-box">

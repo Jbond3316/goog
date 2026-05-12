@@ -163,6 +163,10 @@ form.addEventListener("submit", async (e) => {
     "verify_proxy_at_startup"
   ).checked;
   const reuse_browser = document.getElementById("reuse_browser").checked;
+  const max_per_browser = parseInt(
+    document.getElementById("max_per_browser").value || "0",
+    10
+  );
 
   let resp;
   try {
@@ -186,6 +190,7 @@ form.addEventListener("submit", async (e) => {
         wit_token,
         verify_proxy_at_startup,
         reuse_browser,
+        max_per_browser,
       }),
     });
   } catch (err) {
@@ -288,6 +293,18 @@ form.addEventListener("submit", async (e) => {
     }
   };
 });
+
+// ----- reuse-browser sub-config visibility -----
+const reuseBox = document.getElementById("reuse_browser");
+const reuseConfig = document.getElementById("reuse-config");
+function reflectReuse() {
+  if (!reuseConfig) return;
+  reuseConfig.hidden = !(reuseBox && reuseBox.checked);
+}
+if (reuseBox) {
+  reuseBox.addEventListener("change", reflectReuse);
+  reflectReuse();
+}
 
 if (stopBtn) {
   stopBtn.addEventListener("click", async () => {
