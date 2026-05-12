@@ -28,7 +28,6 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 
 from form_submitter import submit_form, submit_form_chain
 from proxy_support import ProxyConfig, parse_proxy_lines
-from inbox_verifier import InboxConfig, test_login as imap_test_login
 from capmonster_solver import CapMonsterError, CapMonsterSolver
 from human_behavior import HumanBehavior
 from recaptcha_solver import test_wit_token
@@ -50,8 +49,6 @@ class Job:
         max_retries: int = 2,
         concurrency: int = 1,
         send_me_copy: bool = True,
-        inbox: "InboxConfig | None" = None,
-        inbox_timeout: float = 120.0,
         use_signed_in_profile: bool = False,
         captcha_method: str = "audio",
         capmonster_api_key: str = "",
@@ -71,8 +68,6 @@ class Job:
         self.max_retries = max_retries
         self.concurrency = max(1, concurrency)
         self.send_me_copy = send_me_copy
-        self.inbox = inbox
-        self.inbox_timeout = inbox_timeout
         self.use_signed_in_profile = use_signed_in_profile
         self.captcha_method = captcha_method
         self.capmonster_api_key = capmonster_api_key
@@ -81,6 +76,7 @@ class Job:
         self.wit_token = wit_token
         self.verify_proxy_at_startup = verify_proxy_at_startup
         self.reuse_browser = reuse_browser
+        self.cancelled = False
         self.queue: "queue.Queue[dict]" = queue.Queue()
         self.done = False
 
@@ -141,8 +137,6 @@ def _submit_one(job: Job, idx: int, email: str) -> bool:
             proxy_start_index=proxy_start_index,
             max_retries=job.max_retries,
             send_me_copy=job.send_me_copy,
-            inbox=job.inbox,
-            inbox_timeout=job.inbox_timeout,
             use_signed_in_profile=job.use_signed_in_profile,
             captcha_method=job.captcha_method,
             capmonster_api_key=job.capmonster_api_key,
@@ -279,8 +273,6 @@ def _submit_chunk(
             proxy_pool=job.proxy_pool or None,
             proxy_start_index=proxy_start_index,
             send_me_copy=job.send_me_copy,
-            inbox=job.inbox,
-            inbox_timeout=job.inbox_timeout,
             use_signed_in_profile=job.use_signed_in_profile,
             captcha_method=job.captcha_method,
             capmonster_api_key=job.capmonster_api_key,
@@ -291,6 +283,7 @@ def _submit_chunk(
             on_log=on_log_with_progress,
             on_result=per_email_result,
             email_to_form_index=email_to_form_index,
+            should_stop=lambda: job.cancelled,
         )
     except Exception as exc:
         # Catastrophic chain failure (e.g. driver couldn't start). Mark
@@ -378,13 +371,29 @@ def _run_job(job: Job) -> None:
         job.done = True
         return
 
+    def _emit_cancelled(idx: int, email: str) -> None:
+        f_idx = (idx - 1) % len(job.form_urls)
+        job.emit(
+            "result",
+            index=idx,
+            total=total,
+            email=email,
+            form_index=f_idx + 1,
+            success=False,
+            message="Cancelled by user (stop button).",
+        )
+
     if job.concurrency <= 1:
         success = failure = 0
         for idx, email in enumerate(job.emails, start=1):
+            if job.cancelled:
+                _emit_cancelled(idx, email)
+                failure += 1
+                continue
             ok = _submit_one(job, idx, email)
             success += int(ok)
             failure += int(not ok)
-            if idx < total and job.delay > 0:
+            if idx < total and job.delay > 0 and not job.cancelled:
                 job.emit(
                     "log",
                     index=idx,
@@ -404,6 +413,11 @@ def _run_job(job: Job) -> None:
 
     def worker(idx: int, email: str) -> None:
         nonlocal success_count, failure_count
+        if job.cancelled:
+            _emit_cancelled(idx, email)
+            with counts_lock:
+                failure_count += 1
+            return
         ok = _submit_one(job, idx, email)
         with counts_lock:
             if ok:
@@ -417,7 +431,12 @@ def _run_job(job: Job) -> None:
     ) as pool:
         futures = []
         for i, email in enumerate(job.emails, start=1):
-            if i > 1 and stagger > 0:
+            if job.cancelled:
+                # Don't even queue further emails after cancel; the
+                # not-yet-launched ones will be marked cancelled in
+                # the worker.
+                pass
+            elif i > 1 and stagger > 0:
                 time.sleep(stagger)
             futures.append(pool.submit(worker, i, email))
         for f in futures:
@@ -448,29 +467,27 @@ def _parse_human(d: dict) -> "HumanBehavior | None":
     )
 
 
-def _parse_inbox(d: dict) -> tuple["InboxConfig | None", float]:
-    if not d or not d.get("enabled"):
-        return None, 120.0
-    username = (d.get("username") or os.getenv("IMAP_USERNAME") or "").strip()
-    password = d.get("password") or os.getenv("IMAP_PASSWORD") or ""
-    cfg = InboxConfig(
-        host=(d.get("host") or "imap.gmail.com").strip(),
-        port=int(d.get("port") or 993),
-        username=username,
-        password=password,
-        use_ssl=bool(d.get("use_ssl", True)),
-        mailbox=(d.get("mailbox") or "INBOX").strip(),
+@app.post("/api/stop/<job_id>")
+def api_stop(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if job is None:
+        return jsonify({"error": "unknown job"}), 404
+    job.cancelled = True
+    job.emit(
+        "log",
+        index=0,
+        total=len(job.emails),
+        email="",
+        message="Stop requested by user.",
     )
-    timeout = float(d.get("timeout") or 120)
-    return cfg, max(15.0, min(timeout, 600.0))
+    return jsonify({"ok": True})
 
 
 @app.get("/")
 def index() -> str:
     return render_template(
         "index.html",
-        default_imap_username=os.getenv("IMAP_USERNAME", ""),
-        default_imap_password_set=bool(os.getenv("IMAP_PASSWORD")),
         default_capmonster_key_set=bool(os.getenv("CAPMONSTER_API_KEY")),
         default_wit_token_set=bool(os.getenv("WIT_TOKEN")),
     )
@@ -573,19 +590,6 @@ def api_test_capmonster():
         "ok": True,
         "message": f"OK — balance ${balance:.4f}",
     })
-
-
-@app.post("/api/test_inbox")
-def api_test_inbox():
-    data = request.get_json(force=True, silent=True) or {}
-    cfg, _ = _parse_inbox({**data, "enabled": True})
-    if cfg is None or not cfg.is_configured:
-        return jsonify({"ok": False, "error": "Username and password required"}), 400
-    try:
-        imap_test_login(cfg)
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 200
-    return jsonify({"ok": True, "message": f"Logged in to {cfg.username} OK"})
 
 
 @app.post("/api/submit")
@@ -722,8 +726,6 @@ def api_submit():
     verify_proxy_at_startup = bool(data.get("verify_proxy_at_startup", False))
     reuse_browser = bool(data.get("reuse_browser", False))
 
-    inbox_cfg, inbox_timeout = _parse_inbox(data.get("inbox") or {})
-
     human_cfg = _parse_human(data.get("human") or {})
 
     job = Job(
@@ -736,8 +738,6 @@ def api_submit():
         max_retries=max_retries,
         concurrency=concurrency,
         send_me_copy=send_me_copy,
-        inbox=inbox_cfg,
-        inbox_timeout=inbox_timeout,
         use_signed_in_profile=use_signed_in_profile,
         captcha_method=captcha_method,
         capmonster_api_key=capmonster_api_key,

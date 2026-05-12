@@ -40,15 +40,9 @@ solved using the audio challenge, ported from
   form requires the respondent to be logged in. Sign-in is not
   proxied (so your real IP avoids "unusual sign-in activity"
   prompts), but submissions are.
-- **IMAP delivery verification** — after Google accepts each form, log
-  in to a Gmail / IMAP inbox via SSL and wait for the receipt email
-  from `forms-receipts-noreply@google.com`. If the receipt never
-  lands within the timeout, the submission is correctly marked
-  **failed**. Catches silent drops where the response counter goes
-  up but no email actually arrives. For Gmail, requires 2-Step
-  Verification + a 16-character App Password
-  (https://myaccount.google.com/apppasswords).
-  Defaults can be set via `IMAP_USERNAME` / `IMAP_PASSWORD` env vars.
+- **Stop button** — abort a running batch from the UI. In-flight
+  emails finish or time out; pending emails are marked
+  *Cancelled by user*.
 
 ## How it works
 

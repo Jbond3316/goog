@@ -1,7 +1,6 @@
 const form = document.getElementById("submit-form");
 const goBtn = document.getElementById("go");
-const imapTestBtn = document.getElementById("imap_test");
-const imapTestStatus = document.getElementById("imap_test_status");
+const stopBtn = document.getElementById("stop");
 const signinStatusEl = document.getElementById("signin-status");
 const signinStartBtn = document.getElementById("signin_start");
 const signinFinishBtn = document.getElementById("signin_finish");
@@ -17,6 +16,16 @@ const pillOk = document.querySelector(".pill-ok");
 const pillErr = document.querySelector(".pill-err");
 
 let evtSource = null;
+let currentJobId = null;
+
+function showStop(visible) {
+  if (!stopBtn) return;
+  stopBtn.hidden = !visible;
+  if (!visible) {
+    stopBtn.disabled = false;
+    stopBtn.textContent = "Stop";
+  }
+}
 
 function appendLog(msg) {
   const t = new Date().toLocaleTimeString();
@@ -155,20 +164,6 @@ form.addEventListener("submit", async (e) => {
   ).checked;
   const reuse_browser = document.getElementById("reuse_browser").checked;
 
-  const inbox = {
-    enabled: document.getElementById("inbox_enabled").checked,
-    host: document.getElementById("imap_host").value.trim(),
-    port: parseInt(document.getElementById("imap_port").value || "993", 10),
-    username: document.getElementById("imap_username").value.trim(),
-    password: document.getElementById("imap_password").value,
-    timeout: parseInt(
-      document.getElementById("imap_timeout").value || "120",
-      10
-    ),
-    use_ssl: true,
-    mailbox: "INBOX",
-  };
-
   let resp;
   try {
     resp = await fetch("/api/submit", {
@@ -183,7 +178,6 @@ form.addEventListener("submit", async (e) => {
         max_retries,
         concurrency,
         send_me_copy,
-        inbox,
         use_signed_in_profile,
         captcha_method,
         capmonster_api_key,
@@ -210,6 +204,8 @@ form.addEventListener("submit", async (e) => {
   }
 
   const { job_id } = await resp.json();
+  currentJobId = job_id;
+  showStop(true);
   appendLog(`Job started: ${job_id}`);
 
   let done = 0;
@@ -273,6 +269,8 @@ form.addEventListener("submit", async (e) => {
       appendLog(`Done. ${payload.success} success, ${payload.failure} failed.`);
       goBtn.disabled = false;
       goBtn.textContent = "Start submissions";
+      showStop(false);
+      currentJobId = null;
       evtSource.close();
       evtSource = null;
     }
@@ -282,12 +280,30 @@ form.addEventListener("submit", async (e) => {
     appendLog("Lost connection to server.");
     goBtn.disabled = false;
     goBtn.textContent = "Start submissions";
+    showStop(false);
+    currentJobId = null;
     if (evtSource) {
       evtSource.close();
       evtSource = null;
     }
   };
 });
+
+if (stopBtn) {
+  stopBtn.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    stopBtn.disabled = true;
+    stopBtn.textContent = "Stopping ...";
+    try {
+      await fetch(`/api/stop/${currentJobId}`, { method: "POST" });
+      appendLog("Stop requested. In-flight email finishes; pending emails will be marked cancelled.");
+    } catch (e) {
+      appendLog("Stop request failed: " + e);
+      stopBtn.disabled = false;
+      stopBtn.textContent = "Stop";
+    }
+  });
+}
 
 // ----- Google sign-in lifecycle -----
 async function refreshSigninStatus() {
@@ -488,37 +504,3 @@ if (capmonsterTestBtn) {
   });
 }
 
-if (imapTestBtn) {
-  imapTestBtn.addEventListener("click", async () => {
-    const payload = {
-      host: document.getElementById("imap_host").value.trim(),
-      port: parseInt(document.getElementById("imap_port").value || "993", 10),
-      username: document.getElementById("imap_username").value.trim(),
-      password: document.getElementById("imap_password").value,
-      use_ssl: true,
-    };
-    imapTestStatus.textContent = "Testing ...";
-    imapTestStatus.style.color = "";
-    imapTestBtn.disabled = true;
-    try {
-      const r = await fetch("/api/test_inbox", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const j = await r.json();
-      if (j.ok) {
-        imapTestStatus.textContent = j.message || "OK";
-        imapTestStatus.style.color = "var(--ok)";
-      } else {
-        imapTestStatus.textContent = j.error || "Login failed";
-        imapTestStatus.style.color = "var(--err)";
-      }
-    } catch (e) {
-      imapTestStatus.textContent = "Network error: " + e;
-      imapTestStatus.style.color = "var(--err)";
-    } finally {
-      imapTestBtn.disabled = false;
-    }
-  });
-}

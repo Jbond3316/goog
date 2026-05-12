@@ -36,7 +36,6 @@ from recaptcha_solver import (
 )
 from proxy_support import ProxyConfig, build_proxy_auth_extension, cleanup_extension
 from fingerprint import Fingerprint, build_stealth_js, random_fingerprint
-from inbox_verifier import InboxConfig, wait_for_receipt
 from capmonster_solver import (
     CapMonsterError,
     CapMonsterSolver,
@@ -433,8 +432,6 @@ def _attempt_submit(
     headless: bool,
     proxy: Optional[ProxyConfig],
     send_me_copy: bool = True,
-    inbox: Optional[InboxConfig] = None,
-    inbox_timeout: float = 120.0,
     submit_started_at: Optional[datetime] = None,
     use_signed_in_profile: bool = False,
     captcha_method: str = "audio",
@@ -652,25 +649,6 @@ def _attempt_submit(
             f"Form submission accepted by Google for {email} "
             f"(URL: {driver.current_url})."
         )
-
-        if inbox is not None and inbox.is_configured:
-            since = submit_started_at or datetime.now(timezone.utc)
-            since = since.replace(second=0, microsecond=0)
-            receipt = wait_for_receipt(
-                inbox,
-                recipient=email,
-                since=since,
-                timeout=inbox_timeout,
-                logger=log,
-            )
-            if receipt is None:
-                raise RuntimeError(
-                    f"Form was accepted but no receipt arrived in inbox "
-                    f"{inbox.username} within {int(inbox_timeout)}s. "
-                    "Either the form's 'Send me a copy' opt-in wasn't "
-                    "ticked, the form is set to 'never send receipts', "
-                    "or Gmail throttled the receipt."
-                )
     finally:
         if owns_driver:
             try:
@@ -692,8 +670,6 @@ def submit_form(
     max_retries: int = 2,
     retry_backoff: float = 4.0,
     send_me_copy: bool = True,
-    inbox: Optional[InboxConfig] = None,
-    inbox_timeout: float = 120.0,
     use_signed_in_profile: bool = False,
     captcha_method: str = "audio",
     capmonster_api_key: Optional[str] = None,
@@ -748,8 +724,6 @@ def submit_form(
                 headless=headless,
                 proxy=cur_proxy,
                 send_me_copy=send_me_copy,
-                inbox=inbox,
-                inbox_timeout=inbox_timeout,
                 submit_started_at=attempt_start,
                 use_signed_in_profile=use_signed_in_profile,
                 captcha_method=captcha_method,
@@ -798,8 +772,6 @@ def submit_form_chain(
     proxy_pool: Optional[list] = None,
     proxy_start_index: int = 0,
     send_me_copy: bool = True,
-    inbox: Optional[InboxConfig] = None,
-    inbox_timeout: float = 120.0,
     use_signed_in_profile: bool = False,
     captcha_method: str = "audio",
     capmonster_api_key: Optional[str] = None,
@@ -810,6 +782,7 @@ def submit_form_chain(
     on_result: Optional[Callable] = None,
     on_log: Optional[Callable] = None,
     email_to_form_index: Optional[Callable] = None,
+    should_stop: Optional[Callable] = None,
 ) -> "list[SubmitResult]":
     """Submit a list of emails through ONE persistent browser.
 
@@ -899,6 +872,19 @@ def submit_form_chain(
         current_form_url: Optional[str] = None
 
         for i, email in enumerate(emails):
+            if should_stop is not None and should_stop():
+                # Mark this and remaining emails cancelled, stop chain.
+                for j in range(i, len(emails)):
+                    cancelled_email = emails[j]
+                    cancelled_result = SubmitResult(
+                        email=cancelled_email,
+                        success=False,
+                        message="Cancelled by user (stop button).",
+                    )
+                    results.append(cancelled_result)
+                    if on_result is not None:
+                        on_result(j + 1, cancelled_email, cancelled_result)
+                break
             idx = i + 1
             f_idx = email_to_form_index(i) if email_to_form_index else (i % len(form_urls))
             form_url = form_urls[f_idx]
@@ -965,8 +951,6 @@ def submit_form_chain(
                     headless=headless,
                     proxy=cur_proxy,
                     send_me_copy=send_me_copy,
-                    inbox=inbox,
-                    inbox_timeout=inbox_timeout,
                     submit_started_at=attempt_start,
                     use_signed_in_profile=False,  # already cloned
                     captcha_method=captcha_method,
